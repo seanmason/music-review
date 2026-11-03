@@ -1,0 +1,30 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    environment:
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
+      COOKIE_SECURE: "true"
+      TRUST_PROXY: "1"
+    volumes:
+      - review-data:/app/data
+    stop_grace_period: 30s
+  proxy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:?Set your domain in .env}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+volumes:
+  review-data:
+  caddy-data:
+  caddy-config:

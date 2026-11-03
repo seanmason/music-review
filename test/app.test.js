@@ -1,0 +1,309 @@
+import { test, before, after } from "node:test";
+import assert from "node:assert/strict";
+import { spawn, execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+let child,
+  base,
+  adminCookie,
+  visitorCookie,
+  sessionId,
+  otherId,
+  code,
+  noteId,
+  audioId,
+  scoreId;
+const dir = mkdtempSync(path.join(tmpdir(), "score-sound-"));
+async function start() {
+  child = spawn(process.execPath, ["server.js"], {
+    env: {
+      ...process.env,
+      PORT: "0",
+      DATA_DIR: dir,
+      ADMIN_PASSWORD: "test-password-with-enough-entropy",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  base = await new Promise((resolve, reject) => {
+    let output = "";
+    const timer = setTimeout(
+      () => reject(new Error("Server start timed out")),
+      15000,
+    );
+    child.stdout.on("data", (d) => {
+      output += d;
+      const m = output.match(/http:\/\/localhost:(\d+)/);
+      if (m) {
+        clearTimeout(timer);
+        resolve(m[0]);
+      }
+    });
+    child.once("exit", (c) => {
+      clearTimeout(timer);
+      reject(new Error("Server exited " + c));
+    });
+  });
+}
+async function stop() {
+  if (child && child.exitCode === null) {
+    child.kill("SIGTERM");
+    await new Promise((r) => child.once("exit", r));
+  }
+}
+async function req(url, { cookie = adminCookie, body, method } = {}) {
+  const r = await fetch(base + "/api" + url, {
+    method: method || (body === undefined ? "GET" : "POST"),
+    headers: {
+      ...(cookie ? { cookie } : {}),
+      ...(body && !(body instanceof FormData)
+        ? { "Content-Type": "application/json" }
+        : {}),
+    },
+    body:
+      body === undefined
+        ? undefined
+        : body instanceof FormData
+          ? body
+          : JSON.stringify(body),
+  });
+  const content = r.headers.get("content-type");
+  return {
+    status: r.status,
+    data: content?.includes("json") ? await r.json() : await r.arrayBuffer(),
+    cookie: r.headers.get("set-cookie")?.split(";")[0],
+    headers: r.headers,
+  };
+}
+before(start);
+after(async () => {
+  await stop();
+  rmSync(dir, { recursive: true, force: true });
+});
+test("private library, session access and persisted collaborative notes", async (t) => {
+  await t.test(
+    "requires authentication and rejects incorrect password",
+    async () => {
+      assert.equal((await req("/sessions", { cookie: "" })).status, 403);
+      assert.equal(
+        (await req("/login", { body: { password: "wrong" } })).status,
+        401,
+      );
+      const login = await req("/login", {
+        body: { password: "test-password-with-enough-entropy" },
+      });
+      assert.equal(login.status, 200);
+      adminCookie = login.cookie;
+      assert.ok(adminCookie);
+    },
+  );
+  await t.test(
+    "creates separate sessions and grants access with formatted code",
+    async () => {
+      const a = await req("/sessions", {
+        body: { title: "Waltz", description: "Listen for phrasing." },
+      });
+      assert.equal(a.status, 201);
+      sessionId = a.data.id;
+      code = a.data.code;
+      otherId = (await req("/sessions", { body: { title: "Another session" } }))
+        .data.id;
+      const login = await req("/login", {
+        body: {
+          code: code.match(/.{4}/g).join("-").toLowerCase(),
+          name: "Alex",
+        },
+      });
+      assert.equal(login.status, 200);
+      visitorCookie = login.cookie;
+      assert.equal(
+        (await req("/sessions/" + otherId, { cookie: visitorCookie })).status,
+        403,
+      );
+      assert.equal(
+        (await req("/sessions", { cookie: visitorCookie })).status,
+        403,
+      );
+      assert.equal(
+        (
+          await req("/sessions", {
+            cookie: visitorCookie,
+            body: { title: "Unauthorized" },
+          })
+        ).status,
+        403,
+      );
+    },
+  );
+  await t.test(
+    "uploads PDF and converts audio, protects files, supports range seeking",
+    async () => {
+      const pdf = new FormData();
+      pdf.append("file", new Blob(["%PDF-1.4\n%%EOF"]), "score.pdf");
+      const s = await req(`/sessions/${sessionId}/files`, { body: pdf });
+      assert.equal(s.status, 201);
+      scoreId = s.data.id;
+      execFileSync("ffmpeg", [
+        "-v",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        "sine=frequency=440:duration=1",
+        "-y",
+        path.join(dir, "test.wav"),
+      ]);
+      const audio = new FormData();
+      audio.append(
+        "file",
+        new Blob([readFileSync(path.join(dir, "test.wav"))]),
+        "test.wav",
+      );
+      const a = await req(`/sessions/${sessionId}/files`, { body: audio });
+      assert.equal(a.status, 201);
+      audioId = a.data.id;
+      assert.equal(
+        (await req(`/sessions/${sessionId}/files/${audioId}`, { cookie: "" }))
+          .status,
+        403,
+      );
+      const range = await fetch(
+        base + `/api/sessions/${sessionId}/files/${audioId}`,
+        { headers: { cookie: visitorCookie, range: "bytes=0-31" } },
+      );
+      assert.equal(range.status, 206);
+      assert.equal((await range.arrayBuffer()).byteLength, 32);
+      const bad = new FormData();
+      bad.append("file", new Blob(["not pdf"]), "bad.pdf");
+      assert.equal(
+        (await req(`/sessions/${sessionId}/files`, { body: bad })).status,
+        400,
+      );
+      const denied = new FormData();
+      denied.append("file", new Blob(["%PDF-1.4"]), "score.pdf");
+      assert.equal(
+        (
+          await req(`/sessions/${sessionId}/files`, {
+            cookie: visitorCookie,
+            body: denied,
+          })
+        ).status,
+        403,
+      );
+    },
+  );
+  await t.test(
+    "saves notes, replies and enforces edit ownership and file scope",
+    async () => {
+      const n = await req(`/sessions/${sessionId}/notes`, {
+        cookie: visitorCookie,
+        body: {
+          body: "How is this phrase?",
+          kind: "question",
+          audioId,
+          time: 0.4,
+          scoreId,
+          page: 1,
+          x: 0.2,
+          y: 0.4,
+        },
+      });
+      assert.equal(n.status, 201);
+      noteId = n.data.id;
+      assert.equal(
+        (
+          await req(`/sessions/${sessionId}/notes`, {
+            body: { body: "Try a softer ending.", parentId: noteId },
+          })
+        ).status,
+        201,
+      );
+      const data = (
+        await req("/sessions/" + sessionId, { cookie: visitorCookie })
+      ).data;
+      assert.equal(data.notes.length, 2);
+      assert.equal(data.notes[0].editable, true);
+      assert.equal(data.notes[1].editable, false);
+      assert.equal(data.notes[0].x, 0.2);
+      assert.equal(data.notes[0].owner, undefined);
+      assert.equal(
+        (
+          await req(`/sessions/${sessionId}/notes/${data.notes[1].id}`, {
+            cookie: visitorCookie,
+            method: "PATCH",
+            body: { body: "Not mine" },
+          })
+        ).status,
+        403,
+      );
+      assert.equal(
+        (
+          await req(`/sessions/${otherId}/notes`, {
+            body: { body: "bad reference", audioId, time: 0 },
+          })
+        ).status,
+        400,
+      );
+      assert.equal(
+        (
+          await req(`/sessions/${sessionId}/notes`, {
+            body: { body: "bad time", audioId, time: -1 },
+          })
+        ).status,
+        400,
+      );
+      assert.equal(
+        (
+          await req(`/sessions/${sessionId}/notes/${noteId}`, {
+            cookie: visitorCookie,
+            method: "PATCH",
+            body: { body: "Updated question" },
+          })
+        ).status,
+        200,
+      );
+    },
+  );
+  await t.test("rejects cross-origin changes", async () => {
+    const r = await fetch(base + "/api/sessions", {
+      method: "POST",
+      headers: {
+        cookie: adminCookie,
+        "Content-Type": "application/json",
+        origin: "https://untrusted.example",
+      },
+      body: JSON.stringify({ title: "No" }),
+    });
+    assert.equal(r.status, 403);
+  });
+  await t.test("persists files, login and notes through restart", async () => {
+    await stop();
+    await start();
+    const s = await req("/sessions/" + sessionId, { cookie: visitorCookie });
+    assert.equal(s.status, 200);
+    assert.equal(s.data.notes[0].body, "Updated question");
+    assert.equal(s.data.files.length, 2);
+  });
+  await t.test(
+    "rotating a code revokes old access, deletion cleans up session",
+    async () => {
+      const r = await req(`/sessions/${sessionId}/code`, { body: {} });
+      assert.equal(r.status, 200);
+      assert.notEqual(r.data.code, code);
+      assert.equal(
+        (await req("/sessions/" + sessionId, { cookie: visitorCookie })).status,
+        403,
+      );
+      assert.equal(
+        (await req("/login", { body: { code, name: "Alex" } })).status,
+        401,
+      );
+      assert.equal(
+        (await req(`/sessions/${sessionId}`, { body: {}, method: "DELETE" }))
+          .status,
+        200,
+      );
+      assert.equal((await req("/sessions/" + sessionId)).status, 404);
+    },
+  );
+});
