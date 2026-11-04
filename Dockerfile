@@ -1,3 +1,10 @@
+FROM node:24-bookworm-slim AS player-build
+WORKDIR /build
+COPY package*.json ./
+RUN npm ci
+COPY client ./client
+RUN npm run build
+
 FROM node:24-bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg tini && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
@@ -5,6 +12,7 @@ COPY package*.json ./
 RUN npm ci --omit=dev
 COPY server.js ./
 COPY public ./public
+COPY --from=player-build /build/public/vendor ./public/vendor
 RUN mkdir -p /app/data && chown -R node:node /app/data
 USER node
 ENV NODE_ENV=production PORT=3000 DATA_DIR=/app/data

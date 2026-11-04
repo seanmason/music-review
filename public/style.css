@@ -1880,3 +1880,14 @@ audio#player {
 .audio-panel:fullscreen .video-viewport video#player {
   max-height: none;
 }
+
+/* Stock Video.js controls live inside the skin, including its seek bar. */
+.review-player { display: block; width: 100%; flex: 0 0 auto; min-width: 0; }
+video-skin.review-skin { display: block; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 8px; background: #101515; }
+audio-skin.review-skin { display: block; width: 100%; }
+.review-skin > video#player { display: block; width: 100%; height: 100%; min-height: 0; max-height: none; flex: none; border-radius: 0; object-fit: contain; }
+.review-tools { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
+.review-tools label { display: flex; align-items: center; gap: 6px; margin: 0; font-size: .8rem; }
+.review-tools select { width: auto; padding: 5px; }
+.review-tools button { padding: 6px 10px; }
+.review-tools button { white-space: nowrap; font-size: 12px; }

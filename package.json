@@ -7,16 +7,23 @@
     "start": "node --env-file-if-exists=.env server.js",
     "dev": "node --env-file-if-exists=.env --watch server.js",
     "test": "node --test test/*.test.js",
-    "setup": "node scripts/setup.js"
+    "setup": "node scripts/setup.js",
+    "build": "esbuild client/player.js --bundle --format=esm --minify --outfile=public/vendor/player.js",
+    "prestart": "npm run build",
+    "predev": "npm run build"
   },
   "engines": {
     "node": ">=24"
   },
   "dependencies": {
+    "@videojs/html": "10.3.0",
     "express": "^5.1.0",
     "express-rate-limit": "^8.2.0",
     "helmet": "^8.1.0",
     "multer": "^2.0.2",
     "pdfjs-dist": "^6.5.438"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
   }
 }
