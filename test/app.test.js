@@ -360,6 +360,7 @@ test("private library, session access and persisted collaborative notes", async 
         { audioId, time: 0.2 },
         { audioId: vid, time: 0.3 },
         { audioId: vid, time: 0.3, scoreId, page: 1 },
+        { audioId: vid, time: 0.1, endTime: 0.4 },
         {},
       ]) {
         const saved = await req(`/sessions/${sessionId}/notes`, {
@@ -370,6 +371,7 @@ test("private library, session access and persisted collaborative notes", async 
         const note = (await req(`/sessions/${sessionId}`)).data.notes.find(
           (n) => n.id === saved.data.id,
         );
+        assert.equal(note.end_time, attachment.endTime ?? null);
         assert.equal(note.audio_id, attachment.audioId || null);
         assert.equal(note.score_id, attachment.scoreId || null);
         assert.equal(
@@ -383,6 +385,84 @@ test("private library, session access and persisted collaborative notes", async 
           200,
         );
       }
+    },
+  );
+  await t.test(
+    "recording sections validate, edit, restore and persist",
+    async () => {
+      const url = `/sessions/${sessionId}/notes`;
+      for (const attachment of [
+        { audioId, time: 0.4, endTime: 0.2 },
+        { audioId, time: 0.2, endTime: 0.2 },
+        { audioId, time: 0.2, endTime: "invalid" },
+        { audioId, time: 0.2, endTime: 900000 },
+        { endTime: 1 },
+      ])
+        assert.equal(
+          (await req(url, { body: { body: "Bad section", ...attachment } }))
+            .status,
+          400,
+        );
+      const saved = await req(url, {
+        cookie: visitorCookie,
+        body: {
+          body: "First piece",
+          audioId,
+          time: 0,
+          endTime: 0.8,
+          scoreId,
+          page: 1,
+        },
+      });
+      assert.equal(saved.status, 201);
+      const noteUrl = `${url}/${saved.data.id}`;
+      assert.equal(
+        (
+          await req(noteUrl, {
+            cookie: visitorCookie,
+            method: "PATCH",
+            body: { body: "First piece", time: 0.2, endTime: 0.7 },
+          })
+        ).status,
+        200,
+      );
+      assert.equal(
+        (
+          await req(noteUrl, {
+            cookie: visitorCookie,
+            method: "PATCH",
+            body: { body: "Bad edit", time: 0.9 },
+          })
+        ).status,
+        400,
+      );
+      await stop();
+      await start();
+      let note = (await req(`/sessions/${sessionId}`)).data.notes.find(
+        (n) => n.id === saved.data.id,
+      );
+      assert.equal(note.time, 0.2);
+      assert.equal(note.end_time, 0.7);
+      await req(noteUrl, { cookie: visitorCookie, method: "DELETE", body: {} });
+      await req(`${noteUrl}/restore`, { cookie: visitorCookie, body: {} });
+      note = (await req(`/sessions/${sessionId}`)).data.notes.find(
+        (n) => n.id === saved.data.id,
+      );
+      assert.equal(note.end_time, 0.7);
+      assert.equal(
+        (
+          await req(noteUrl, {
+            cookie: visitorCookie,
+            method: "PATCH",
+            body: { body: "A moment", endTime: null },
+          })
+        ).status,
+        200,
+      );
+      note = (await req(`/sessions/${sessionId}`)).data.notes.find(
+        (n) => n.id === saved.data.id,
+      );
+      assert.equal(note.end_time, null);
     },
   );
   await t.test(

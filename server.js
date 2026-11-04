@@ -43,6 +43,7 @@ for (const [name, type] of [
   ["height", "REAL"],
   ["location_label", "TEXT"],
   ["deleted_at", "TEXT"],
+  ["end_time", "REAL"],
 ]) {
   if (!noteColumns.has(name))
     db.exec(`ALTER TABLE notes ADD COLUMN ${name} ${type}`);
@@ -405,6 +406,18 @@ app.get("/api/sessions/:id/files/:fileId", access, (req, res) => {
   );
   res.sendFile(path.join(data, "uploads", file.stored));
 });
+function validateRecordingTimes(time, endTime, hasRecording) {
+  if (hasRecording && (!Number.isFinite(time) || time < 0 || time > 864000))
+    throw fail(400, "Choose a valid recording start time.");
+  if (
+    endTime !== null &&
+    (!hasRecording ||
+      !Number.isFinite(endTime) ||
+      endTime <= time ||
+      endTime > 864000)
+  )
+    throw fail(400, "The section end must be later than its start.");
+}
 app.post("/api/sessions/:id/notes", access, (req, res) => {
   const body = text(req.body.body, 5000);
   if (!body) throw fail(400, "Write a note first.");
@@ -423,8 +436,8 @@ app.post("/api/sessions/:id/notes", access, (req, res) => {
     throw fail(400, "Choose a file from this session.");
   const time = audio ? Number(req.body.time) : null;
   const page = score ? Number(req.body.page) : null;
-  if (audio && (!Number.isFinite(time) || time < 0 || time > 864000))
-    throw fail(400, "Invalid audio time.");
+  const endTime = req.body.endTime == null ? null : req.body.endTime;
+  validateRecordingTimes(time, endTime, !!audio);
   if (score && (!Number.isInteger(page) || page < 1 || page > 10000))
     throw fail(400, "Invalid score page.");
   const coords =
@@ -463,8 +476,8 @@ app.post("/api/sessions/:id/notes", access, (req, res) => {
   const id = randomUUID();
   db.prepare(
     `INSERT INTO notes
-    (id,session_id,author,owner,kind,body,audio_id,time,score_id,page,x,y,parent_id,created,width,height,location_label)
-    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    (id,session_id,author,owner,kind,body,audio_id,time,score_id,page,x,y,parent_id,created,width,height,location_label,end_time)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
   ).run(
     id,
     req.params.id,
@@ -483,6 +496,7 @@ app.post("/api/sessions/:id/notes", access, (req, res) => {
     width,
     height,
     locationLabel,
+    endTime,
   );
   res.status(201).json({ id });
 });
@@ -497,7 +511,18 @@ app.patch("/api/sessions/:id/notes/:noteId", access, (req, res) => {
     throw fail(403, "You can only change your own notes.");
   const body = text(req.body.body, 5000);
   if (!body) throw fail(400, "Write a note first.");
-  db.prepare("UPDATE notes SET body=? WHERE id=?").run(body, note.id);
+  const time = req.body.time === undefined ? note.time : req.body.time;
+  const endTime =
+    req.body.endTime === undefined ? note.end_time : req.body.endTime;
+  validateRecordingTimes(time, endTime, !!note.audio_id);
+  if (!note.audio_id && time !== null)
+    throw fail(400, "This note has no recording attached.");
+  db.prepare("UPDATE notes SET body=?,time=?,end_time=? WHERE id=?").run(
+    body,
+    time,
+    endTime,
+    note.id,
+  );
   res.json({ ok: true });
 });
 app.delete("/api/sessions/:id/notes/:noteId", access, (req, res) => {
