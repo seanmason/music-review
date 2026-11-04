@@ -1042,8 +1042,8 @@ body:has(.workspace) #app {
 #pins button {
   pointer-events: auto;
 }
-.pinning #pins {
-  visibility: hidden;
+.pinning #pins button {
+  pointer-events: none;
 }
 .pinning #pins .draft-mark {
   visibility: visible;
@@ -1499,4 +1499,102 @@ video#player {
 }
 .note-compose[hidden] {
   display: none;
+}
+
+/* Saved locations stay visible while a new passage is selected. */
+.score-region {
+  background: #e5b53d38;
+}
+.note-number {
+  font-weight: 700;
+  color: var(--green);
+}
+.recording-marks {
+  flex-shrink: 0;
+  margin: 8px 0;
+}
+.marks-heading {
+  font-size: 12px;
+  font-weight: 600;
+  display: flex;
+  gap: 8px;
+}
+.marked-track {
+  position: relative;
+  height: 16px;
+  margin: 8px 8px 0;
+  border-bottom: 4px solid #dce5df;
+}
+.recording-tick {
+  position: absolute;
+  bottom: -6px;
+  height: 16px;
+  width: 4px;
+  background: #245743;
+  transform: translateX(-50%);
+  border-radius: 2px;
+}
+.recording-tick.question {
+  background: #a96d2f;
+}
+#recording-playhead {
+  position: absolute;
+  top: -2px;
+  bottom: -8px;
+  width: 2px;
+  background: #17231f;
+  z-index: 1;
+}
+.track-times {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--muted);
+  margin: 5px 4px;
+}
+.marked-jumps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  max-height: 80px;
+  overflow: auto;
+  margin-top: 6px;
+}
+.marked-jump {
+  font-size: 12px;
+  padding: 4px 7px;
+  min-height: 30px;
+}
+.marked-jump span {
+  border-radius: 50%;
+  background: #e3ece5;
+  padding: 1px 5px;
+  font-weight: bold;
+}
+.marked-jump.question span {
+  background: #f3e7cf;
+}
+.marked-jump.selected {
+  border-color: var(--green);
+  background: #edf4ee;
+}
+.marks-empty {
+  margin: 4px 0 0;
+  font-size: 11px;
+}
+
+button.recording-tick {
+  min-height: 24px;
+  min-width: 12px;
+  padding: 0;
+  border: 3px solid white;
+  width: 12px;
+  bottom: -10px;
+}
+
+.note-meta {
+  justify-content: flex-start;
+}
+.note-meta > span:last-child {
+  margin-left: auto;
 }

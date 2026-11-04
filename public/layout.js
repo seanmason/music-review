@@ -3,13 +3,13 @@ const KEY = "score-sound-layout-v1";
 const defaults = () => ({
   slots: { score: "main", audio: "upper", notes: "lower" },
   width: 65,
-  upper: 205,
+  upper: 280,
   right: false,
 });
 export function setupWorkspaceLayout(onResize, video = false) {
   const grid = document.querySelector("#review-grid");
   let layout = defaults();
-  if (video) layout.upper = 350;
+  if (video) layout.upper = 420;
   try {
     const saved = JSON.parse(localStorage.getItem(KEY));
     if (
@@ -27,7 +27,7 @@ export function setupWorkspaceLayout(onResize, video = false) {
       };
     }
   } catch {}
-  if (video) layout.upper = Math.max(340, layout.upper);
+  layout.upper = Math.max(video ? 420 : 280, layout.upper);
   const panes = [...grid.querySelectorAll("[data-pane]")];
   function apply(save = true) {
     grid.classList.toggle("main-right", layout.right);
@@ -202,7 +202,7 @@ export function setupWorkspaceLayout(onResize, video = false) {
   splitter("#row-divider", "y");
   document.querySelector("#reset-layout").onclick = () => {
     layout = defaults();
-    if (video) layout.upper = 350;
+    if (video) layout.upper = 420;
     apply();
   };
   document.querySelector("#flip-layout").onclick = () => {
@@ -210,8 +210,8 @@ export function setupWorkspaceLayout(onResize, video = false) {
     apply();
   };
   grid.addEventListener("recordingtypechange", (e) => {
-    if (e.detail && layout.slots.audio === "upper" && layout.upper < 340) {
-      layout.upper = 340;
+    if (e.detail && layout.slots.audio === "upper" && layout.upper < 420) {
+      layout.upper = 420;
       apply();
     }
   });
