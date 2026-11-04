@@ -1791,3 +1791,92 @@ audio#player {
   white-space: nowrap;
   text-overflow: ellipsis;
 }
+.video-viewport {
+  position: relative;
+  width: 100%;
+  height: 190px;
+  min-height: 120px;
+  flex: 1 1 190px;
+  overflow: auto;
+  background: #17231f;
+  border-radius: 6px;
+  --video-zoom: 1;
+}
+.video-viewport video#player {
+  display: block;
+  width: calc(100% * var(--video-zoom));
+  height: calc(100% * var(--video-zoom));
+  max-width: none;
+  max-height: none;
+  min-height: 0;
+  object-fit: contain;
+  border-radius: 0;
+}
+.video-viewport.zoomed {
+  cursor: grab;
+  touch-action: none;
+}
+.video-viewport.zoomed:active {
+  cursor: grabbing;
+}
+#video-zoom-control {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+}
+#video-zoom-control[hidden] {
+  display: none;
+}
+#video-zoom {
+  min-height: 30px;
+  padding: 3px;
+  width: 72px;
+  font-size: 12px;
+}
+.recording-marks {
+  margin: 0 0 4px;
+}
+.timeline-hint {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 3px 0 0;
+  line-height: 1.4;
+}
+.seek-track {
+  touch-action: none;
+  user-select: none;
+}
+.seek-track.selecting-section,
+.seek-track.selecting-section input {
+  cursor: crosshair;
+}
+#section-draft {
+  position: absolute;
+  height: 22px;
+  background: #77b89366;
+  border: 1px solid #245743;
+  pointer-events: none;
+  z-index: 1;
+}
+#section-draft[hidden] {
+  display: none;
+}
+#section-adjust summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--green);
+}
+#selected-section {
+  font-weight: 600;
+  font-size: 12px;
+  margin: 8px 0;
+}
+.audio-panel:fullscreen .video-viewport {
+  min-height: 120px;
+  height: 55vh;
+  flex: 1 1 55vh;
+}
+.audio-panel:fullscreen .video-viewport video#player {
+  max-height: none;
+}

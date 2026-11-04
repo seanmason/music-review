@@ -1,3 +1,4 @@
+import { bindTimelineSelection } from "/timeline-selection.js";
 import { setupWorkspaceLayout } from "/layout.js";
 import * as pdfjs from "/pdfjs/pdf.mjs";
 pdfjs.GlobalWorkerOptions.workerSrc = "/pdfjs/pdf.worker.mjs";
@@ -20,6 +21,10 @@ let me,
   zoom = "page",
   activePin = null,
   resizeObserver;
+let selectingSection = false,
+  sectionAnchor = null,
+  sectionPreview = null,
+  cancelTimelineDrag = null;
 const codes = new Map();
 const esc = (v) =>
   String(v ?? "").replace(
@@ -142,6 +147,9 @@ function createSession() {
   };
 }
 async function openSession(id) {
+  selectingSection = false;
+  sectionAnchor = null;
+  sectionPreview = null;
   session = await api(`/sessions/${id}`);
   location.hash = id;
   resizeObserver?.disconnect();
@@ -167,7 +175,7 @@ const options = (type) =>
     .join("");
 function workspace() {
   account();
-  app.innerHTML = `<section class="workspace">${me.admin ? '<button class="quiet back" id="back">← All Sessions</button>' : ""}<div class="session-heading"><div><div class="eyebrow">Listening Room</div><h1 title="${esc(session.title)}">${esc(session.title)}</h1>${session.description ? `<button class="quiet session-details" id="session-details" aria-label="About This Session" title="About This Session">ⓘ</button>` : ""}</div>${me.admin ? '<div class="actions"><button id="add-files">+ Add Files</button><button class="primary" id="share">Share Session</button><button class="quiet" id="session-menu" aria-label="Session Options">•••</button></div>' : ""}</div>${me.admin ? `<div class="upload-zone" id="upload-zone" ${session.files.length ? "hidden" : ""}><label for="files">Add Scores and Recordings</label><input type="file" id="files" accept=".pdf,.aac,.m4a,.mp3,.wav,.ogg,.flac,.webm,.mp4,.mov" multiple><p class="muted">PDF, audio, and video · Up to 150 MB per file. Videos may take a few minutes to prepare.</p><p id="upload-status" role="status"></p></div>` : ""}<div class="layout-tools"><button id="flip-layout">Switch Sides</button><button id="reset-layout">Reset Layout</button></div><div class="review-grid" id="review-grid"><section class="panel score-panel" data-pane="score"><div class="panel-head"><h2>Score</h2><button class="pane-handle" draggable="false" data-move="score" aria-label="Move Score Pane" title="Drag to another pane, or click to choose a position">⠿</button>${scoreId ? `<label class="sr-only" for="score-select">Choose Score</label><select id="score-select">${options("score")}</select>` : ""}</div>${scoreId ? `<div class="score-toolbar"><div class="page-controls"><button id="prev-page" aria-label="Previous Page">←</button><span id="page-label">Page 1</span><button id="next-page" aria-label="Next Page">→</button></div><button class="quiet" id="pin-mode">＋ Mark Passage</button><label class="sr-only" for="score-zoom">Score Zoom</label><select id="score-zoom"><option value="page" selected>Fit Page</option><option value="width">Fit Width</option><option value="1.5">150%</option><option value="2">200%</option><option value="3">300%</option></select><a id="download-score" href="${fileUrl(scoreId)}" target="_blank" rel="noopener">Open PDF ↗</a></div><div class="score-stage" id="score-stage"><div class="score-paper" id="score-paper"><canvas id="score-canvas" tabindex="0" aria-label="Score Page" aria-describedby="score-hint"></canvas><div id="pins"></div></div><p id="score-status" role="status">Opening score…</p></div><p class="hint" id="score-hint">Choose “Mark Passage”, then click a note or drag around a phrase.</p>` : '<div class="score-stage"><div class="empty">No score added yet.<br>You can still listen and leave notes.</div></div>'}</section><section class="panel audio-panel" data-pane="audio"><div class="audio-title"><h2>Recording</h2><button class="pane-handle" draggable="false" data-move="audio" aria-label="Move Recording Pane" title="Drag to another pane, or click to choose a position">⠿</button>${audioId ? `<label class="sr-only" for="audio-select">Choose Recording</label><select id="audio-select">${options("audio")}</select>` : ""}</div>${audioId ? `${playerMarkup()}<div class="player-controls"><button id="play-toggle" type="button">Play</button><button id="mute-toggle" type="button" aria-label="Mute Recording">Mute</button><button id="fullscreen" type="button">Full Screen</button><button id="mark-section" type="button">Mark Section</button><label class="volume-control" for="player-volume">Volume <input id="player-volume" type="range" min="0" max="1" step="0.05" value="1"></label></div><div id="recording-marks" class="recording-marks" aria-label="Recording Timeline"></div><div class="audio-tools"><div><button id="rewind">↶ 10 sec</button> <button id="forward">10 sec ↷</button></div><label for="speed">Speed <select id="speed"><option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1" selected>1×</option><option value="1.25">1.25×</option></select></label></div><p id="audio-error" class="error" role="alert" hidden></p>` : '<p class="muted">No recording added yet. Notes on the score are welcome.</p>'}</section><aside class="panel notes-panel" data-pane="notes"><div class="panel-head"><h2>Notes & Questions <span class="muted" id="note-count"></span></h2><button class="pane-handle" draggable="false" data-move="notes" aria-label="Move Notes Pane" title="Drag to another pane, or click to choose a position">⠿</button><label for="filter" class="sr-only">Filter Notes</label><select id="filter" class="filter"><option value="all">All</option><option value="note">Notes</option><option value="question">Questions</option></select></div><div class="notes-scroll"><button type="button" id="toggle-compose" class="compose-toggle" aria-controls="note-form">Add Note or Question</button><form class="note-compose" id="note-form" ${session.notes.some((n) => !n.parent_id) ? "hidden" : ""}><div class="kind-tabs" aria-label="Note Type"><button type="button" class="active" data-kind="note" aria-pressed="true">Note</button><button type="button" data-kind="question" aria-pressed="false">Question</button></div><label for="note-body">What would you like to note?</label><textarea id="note-body" rows="3" maxlength="5000" required placeholder="A thought, a question, something to return to…"></textarea><div class="attachment-picker"><label for="note-target">Attach To</label><select id="note-target"><option value="general">General — No Location</option>${scoreId ? '<option value="score" selected>Score Only</option>' : ""}${audioId ? `<option value="recording" ${!scoreId ? "selected" : ""}>Recording Only</option>` : ""}${scoreId && audioId ? '<option value="both">Score and Recording</option>' : ""}</select></div>${audioId ? `<fieldset id="recording-location" hidden><legend>Recording Location</legend><label for="recording-scope">Mark</label><select id="recording-scope"><option value="point">A Moment</option><option value="section">A Section</option></select><div id="section-times" hidden><label for="section-start">Start</label><div class="time-entry"><input id="section-start" aria-describedby="section-help" inputmode="decimal" placeholder="0:00"><button type="button" id="use-start">Use Current Time</button></div><label for="section-end">End</label><div class="time-entry"><input id="section-end" aria-describedby="section-help" inputmode="decimal" placeholder="0:30"><button type="button" id="use-end">Use Current Time</button></div><p id="section-help" class="muted">Enter minutes:seconds, or seek in the recording and use its current time. Use the note text to name the piece or describe the section.</p></div></fieldset>` : ""}<input type="checkbox" id="attach-time" hidden ${!scoreId && audioId ? "checked" : ""}><input type="checkbox" id="attach-score" hidden ${scoreId ? "checked" : ""}><div class="attachment-summary">${audioId ? '<span id="time-summary" hidden>Current Position: <span id="current-time">0:00</span></span>' : ""}${scoreId ? '<span id="score-summary">Score: <span id="current-page">page 1</span></span>' : ""}</div><div class="attachment" id="point-label"></div>${scoreId ? '<div id="location-field" hidden><button type="button" class="quiet" id="clear-mark">Clear Mark</button></div>' : ""}<p class="error" id="note-error" role="alert" hidden></p><button class="primary" type="submit">Save Note</button></form><div class="notes-list" id="notes-list"></div><p class="hint">Notes are shared with everyone in this session.</p></div></aside><div class="pane-divider column-divider" id="column-divider" role="separator" tabindex="0" aria-label="Resize Main Pane" aria-orientation="vertical"></div><div class="pane-divider row-divider" id="row-divider" role="separator" tabindex="0" aria-label="Resize Side Panes" aria-orientation="horizontal"></div></div></section>`;
+  app.innerHTML = `<section class="workspace">${me.admin ? '<button class="quiet back" id="back">← All Sessions</button>' : ""}<div class="session-heading"><div><div class="eyebrow">Listening Room</div><h1 title="${esc(session.title)}">${esc(session.title)}</h1>${session.description ? `<button class="quiet session-details" id="session-details" aria-label="About This Session" title="About This Session">ⓘ</button>` : ""}</div>${me.admin ? '<div class="actions"><button id="add-files">+ Add Files</button><button class="primary" id="share">Share Session</button><button class="quiet" id="session-menu" aria-label="Session Options">•••</button></div>' : ""}</div>${me.admin ? `<div class="upload-zone" id="upload-zone" ${session.files.length ? "hidden" : ""}><label for="files">Add Scores and Recordings</label><input type="file" id="files" accept=".pdf,.aac,.m4a,.mp3,.wav,.ogg,.flac,.webm,.mp4,.mov" multiple><p class="muted">PDF, audio, and video · Up to 150 MB per file. Videos may take a few minutes to prepare.</p><p id="upload-status" role="status"></p></div>` : ""}<div class="layout-tools"><button id="flip-layout">Switch Sides</button><button id="reset-layout">Reset Layout</button></div><div class="review-grid" id="review-grid"><section class="panel score-panel" data-pane="score"><div class="panel-head"><h2>Score</h2><button class="pane-handle" draggable="false" data-move="score" aria-label="Move Score Pane" title="Drag to another pane, or click to choose a position">⠿</button>${scoreId ? `<label class="sr-only" for="score-select">Choose Score</label><select id="score-select">${options("score")}</select>` : ""}</div>${scoreId ? `<div class="score-toolbar"><div class="page-controls"><button id="prev-page" aria-label="Previous Page">←</button><span id="page-label">Page 1</span><button id="next-page" aria-label="Next Page">→</button></div><button class="quiet" id="pin-mode">＋ Mark Passage</button><label class="sr-only" for="score-zoom">Score Zoom</label><select id="score-zoom"><option value="page" selected>Fit Page</option><option value="width">Fit Width</option><option value="1.5">150%</option><option value="2">200%</option><option value="3">300%</option></select><a id="download-score" href="${fileUrl(scoreId)}" target="_blank" rel="noopener">Open PDF ↗</a></div><div class="score-stage" id="score-stage"><div class="score-paper" id="score-paper"><canvas id="score-canvas" tabindex="0" aria-label="Score Page" aria-describedby="score-hint"></canvas><div id="pins"></div></div><p id="score-status" role="status">Opening score…</p></div><p class="hint" id="score-hint">Choose “Mark Passage”, then click a note or drag around a phrase.</p>` : '<div class="score-stage"><div class="empty">No score added yet.<br>You can still listen and leave notes.</div></div>'}</section><section class="panel audio-panel" data-pane="audio"><div class="audio-title"><h2>Recording</h2><button class="pane-handle" draggable="false" data-move="audio" aria-label="Move Recording Pane" title="Drag to another pane, or click to choose a position">⠿</button>${audioId ? `<label class="sr-only" for="audio-select">Choose Recording</label><select id="audio-select">${options("audio")}</select>` : ""}</div>${audioId ? `${playerMarkup()}<div id="recording-marks" class="recording-marks" aria-label="Recording Timeline"></div><div class="player-controls"><button id="play-toggle" type="button">Play</button><button id="mute-toggle" type="button" aria-label="Mute Recording">Mute</button><button id="fullscreen" type="button">Full Screen</button><button id="mark-section" type="button" aria-pressed="false">Mark Section</button><label class="volume-control" for="player-volume">Volume <input id="player-volume" type="range" min="0" max="1" step="0.05" value="1"></label><label id="video-zoom-control" for="video-zoom">Zoom <select id="video-zoom"><option value="1">Fit</option><option value="1.5">150%</option><option value="2">200%</option><option value="3">300%</option></select></label></div><div class="audio-tools"><div><button id="rewind">↶ 10 sec</button> <button id="forward">10 sec ↷</button></div><label for="speed">Speed <select id="speed"><option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1" selected>1×</option><option value="1.25">1.25×</option></select></label></div><p id="audio-error" class="error" role="alert" hidden></p>` : '<p class="muted">No recording added yet. Notes on the score are welcome.</p>'}</section><aside class="panel notes-panel" data-pane="notes"><div class="panel-head"><h2>Notes & Questions <span class="muted" id="note-count"></span></h2><button class="pane-handle" draggable="false" data-move="notes" aria-label="Move Notes Pane" title="Drag to another pane, or click to choose a position">⠿</button><label for="filter" class="sr-only">Filter Notes</label><select id="filter" class="filter"><option value="all">All</option><option value="note">Notes</option><option value="question">Questions</option></select></div><div class="notes-scroll"><button type="button" id="toggle-compose" class="compose-toggle" aria-controls="note-form">Add Note or Question</button><form class="note-compose" id="note-form" ${session.notes.some((n) => !n.parent_id) ? "hidden" : ""}><div class="kind-tabs" aria-label="Note Type"><button type="button" class="active" data-kind="note" aria-pressed="true">Note</button><button type="button" data-kind="question" aria-pressed="false">Question</button></div><label for="note-body">What would you like to note?</label><textarea id="note-body" rows="3" maxlength="5000" required placeholder="A thought, a question, something to return to…"></textarea><div class="attachment-picker"><label for="note-target">Attach To</label><select id="note-target"><option value="general">General — No Location</option>${scoreId ? '<option value="score" selected>Score Only</option>' : ""}${audioId ? `<option value="recording" ${!scoreId ? "selected" : ""}>Recording Only</option>` : ""}${scoreId && audioId ? '<option value="both">Score and Recording</option>' : ""}</select></div>${audioId ? `<fieldset id="recording-location" hidden><legend>Recording Location</legend><label for="recording-scope">Mark</label><select id="recording-scope"><option value="point">A Moment</option><option value="section">A Section</option></select><div id="section-times" hidden><p id="selected-section">Select a section on the recording timeline.</p><details id="section-adjust"><summary>Adjust Times</summary><label for="section-start">Start</label><div class="time-entry"><input id="section-start" aria-describedby="section-help" inputmode="decimal" placeholder="0:00"><button type="button" id="use-start">Use Current Time</button></div><label for="section-end">End</label><div class="time-entry"><input id="section-end" aria-describedby="section-help" inputmode="decimal" placeholder="0:30"><button type="button" id="use-end">Use Current Time</button></div><p id="section-help" class="muted">Enter minutes:seconds, or seek in the recording and use its current time. Use the note text to name the piece or describe the section.</p></details></div></fieldset>` : ""}<input type="checkbox" id="attach-time" hidden ${!scoreId && audioId ? "checked" : ""}><input type="checkbox" id="attach-score" hidden ${scoreId ? "checked" : ""}><div class="attachment-summary">${audioId ? '<span id="time-summary" hidden>Current Position: <span id="current-time">0:00</span></span>' : ""}${scoreId ? '<span id="score-summary">Score: <span id="current-page">page 1</span></span>' : ""}</div><div class="attachment" id="point-label"></div>${scoreId ? '<div id="location-field" hidden><button type="button" class="quiet" id="clear-mark">Clear Mark</button></div>' : ""}<p class="error" id="note-error" role="alert" hidden></p><button class="primary" type="submit">Save Note</button></form><div class="notes-list" id="notes-list"></div><p class="hint">Notes are shared with everyone in this session.</p></div></aside><div class="pane-divider column-divider" id="column-divider" role="separator" tabindex="0" aria-label="Resize Main Pane" aria-orientation="vertical"></div><div class="pane-divider row-divider" id="row-divider" role="separator" tabindex="0" aria-label="Resize Side Panes" aria-orientation="horizontal"></div></div></section>`;
   if ($("#session-details"))
     $("#session-details").onclick = () =>
       dialog(
@@ -236,24 +244,25 @@ function workspace() {
       $("#section-times").hidden = $("#recording-scope").value !== "section";
       if (!$("#section-times").hidden && !$("#section-start").value)
         initializeSection();
+      syncSectionDraft();
     };
-    $("#mark-section").onclick = async () => {
-      if (document.fullscreenElement) await document.exitFullscreen();
+    $("#mark-section").onclick = () => {
+      selectingSection = !selectingSection;
+      sectionAnchor = selectingSection ? $("#player").currentTime : null;
+      sectionPreview = null;
       $("#player").pause();
-      $("#note-target").value =
-        $("#attach-score").checked && point ? "both" : "recording";
-      syncNoteTarget();
-      $("#recording-scope").value = "section";
-      $("#section-times").hidden = false;
-      initializeSection();
-      setComposer(true);
-      $("#section-end").focus();
+      updateSectionSelection();
+      if (selectingSection) $("#recording-seek").focus();
     };
+    $("#video-zoom").onchange = updateVideoZoom;
+    $("#section-start").oninput = $("#section-end").oninput = syncSectionDraft;
     $("#use-start").onclick = () => {
       $("#section-start").value = inputTime($("#player").currentTime);
+      syncSectionDraft();
     };
     $("#use-end").onclick = () => {
       $("#section-end").value = inputTime($("#player").currentTime);
+      syncSectionDraft();
     };
     $("#rewind").onclick = () => {
       $("#player").currentTime = Math.max(0, $("#player").currentTime - 10);
@@ -339,8 +348,102 @@ function setComposer(open) {
 function playerMarkup() {
   const video = session.files.find((f) => f.id === audioId)?.kind === "video";
   return video
-    ? `<video id="player" playsinline preload="metadata" src="${fileUrl(audioId)}"></video>`
+    ? `<div id="video-viewport" class="video-viewport" tabindex="0" aria-label="Video; zoom in to inspect, then drag or scroll to move around"><video id="player" playsinline preload="metadata" src="${fileUrl(audioId)}"></video></div>`
     : `<audio id="player" preload="metadata" src="${fileUrl(audioId)}"></audio>`;
+}
+function updateVideoZoom() {
+  const viewport = $("#video-viewport");
+  if (!viewport) return;
+  const oldZoom = Number(viewport.dataset.zoom || 1),
+    zoom = Number($("#video-zoom").value);
+  const centerX = (viewport.scrollLeft + viewport.clientWidth / 2) / oldZoom;
+  const centerY = (viewport.scrollTop + viewport.clientHeight / 2) / oldZoom;
+  viewport.dataset.zoom = zoom;
+  viewport.style.setProperty("--video-zoom", zoom);
+  viewport.scrollLeft = centerX * zoom - viewport.clientWidth / 2;
+  viewport.scrollTop = centerY * zoom - viewport.clientHeight / 2;
+  viewport.classList.toggle("zoomed", zoom > 1);
+}
+function bindVideoPan() {
+  const viewport = $("#video-viewport");
+  if (!viewport) return;
+  let pan = null;
+  viewport.onpointerdown = (e) => {
+    if (e.button !== 0 || Number(viewport.dataset.zoom || 1) === 1) return;
+    e.preventDefault();
+    pan = {
+      x: e.clientX,
+      y: e.clientY,
+      left: viewport.scrollLeft,
+      top: viewport.scrollTop,
+    };
+    viewport.setPointerCapture(e.pointerId);
+  };
+  viewport.onpointermove = (e) => {
+    if (!pan) return;
+    viewport.scrollLeft = pan.left + pan.x - e.clientX;
+    viewport.scrollTop = pan.top + pan.y - e.clientY;
+  };
+  viewport.onpointerup = viewport.onpointercancel = () => {
+    pan = null;
+  };
+}
+function updateSectionSelection() {
+  const button = $("#mark-section"),
+    track = $(".seek-track"),
+    hint = $("#timeline-hint"),
+    draft = $("#section-draft");
+  if (!button || !track) return;
+  button.textContent = selectingSection ? "Cancel Selection" : "Mark Section";
+  button.setAttribute("aria-pressed", String(selectingSection));
+  track.classList.toggle("selecting-section", selectingSection);
+  hint.textContent = selectingSection
+    ? "Drag across the timeline. Keyboard: move to the end with arrow keys, then Enter. Escape cancels."
+    : "Right-click and drag on the timeline to mark a section, or choose Mark Section, then drag.";
+  draft.hidden = !sectionPreview;
+  if (sectionPreview && Number.isFinite($("#player").duration)) {
+    draft.style.left = `${(sectionPreview.start / $("#player").duration) * 100}%`;
+    draft.style.width = `${((sectionPreview.end - sectionPreview.start) / $("#player").duration) * 100}%`;
+    hint.textContent = `${inputTime(sectionPreview.start)}–${inputTime(sectionPreview.end)} selected. ${selectingSection ? "Release the pointer or press Enter to add a note." : "Write a note to save this section."}`;
+  }
+}
+async function selectRecordingSection(range) {
+  if (document.fullscreenElement) await document.exitFullscreen();
+  $("#player").pause();
+  selectingSection = false;
+  sectionPreview = range;
+  $("#note-target").value =
+    $("#attach-score").checked && point ? "both" : "recording";
+  syncNoteTarget();
+  $("#recording-scope").value = "section";
+  $("#section-times").hidden = false;
+  $("#section-start").value = inputTime(range.start);
+  $("#section-end").value = inputTime(range.end);
+  $("#section-adjust").open = false;
+  $("#selected-section").textContent =
+    `${inputTime(range.start)}–${inputTime(range.end)}`;
+  setComposer(true);
+  updateSectionSelection();
+  $("#note-body").focus();
+}
+function syncSectionDraft() {
+  sectionPreview = null;
+  if ($("#recording-scope").value === "section") {
+    try {
+      const times = sectionTimes(
+        $("#section-start").value,
+        $("#section-end").value,
+        $("#player").duration,
+      );
+      sectionPreview = { start: times.time, end: times.endTime };
+      $("#selected-section").textContent =
+        `${inputTime(times.time)}–${inputTime(times.endTime)}`;
+    } catch {
+      $("#selected-section").textContent =
+        "Select a section on the timeline, or adjust its times.";
+    }
+  }
+  updateSectionSelection();
 }
 function initializeSection() {
   $("#section-start").value = inputTime($("#player").currentTime);
@@ -385,6 +488,9 @@ function bindPlayer() {
   $("#player").onloadedmetadata = renderRecordingMarks;
   $("#player").ondurationchange = renderRecordingMarks;
   $("#fullscreen").hidden = $("#player").tagName !== "VIDEO";
+  $("#video-zoom-control").hidden = $("#player").tagName !== "VIDEO";
+  $("#video-zoom").value = "1";
+  bindVideoPan();
   $("#play-toggle").textContent = "Play";
   $("#mute-toggle").textContent = "Mute";
   $("#mute-toggle").setAttribute("aria-label", "Mute Recording");
@@ -421,7 +527,10 @@ function switchRecording(id) {
   $("#section-start").value = "";
   $("#section-end").value = "";
   $("#audio-select").value = id;
-  $("#player").outerHTML = playerMarkup();
+  ($("#video-viewport") || $("#player")).outerHTML = playerMarkup();
+  selectingSection = false;
+  sectionPreview = null;
+  sectionAnchor = null;
   bindPlayer();
   $("#review-grid").dispatchEvent(
     new CustomEvent("recordingtypechange", {
@@ -744,6 +853,10 @@ function renderRecordingMarks() {
   const container = $("#recording-marks"),
     player = $("#player");
   if (!container || !player) return;
+  $("#mark-section").disabled = !(
+    Number.isFinite(player.duration) && player.duration > 0
+  );
+  if (selectingSection && container.querySelector("#recording-seek")) return;
   const notes = session.notes
     .filter((n) => !n.parent_id && n.audio_id === audioId && n.time !== null)
     .sort((a, b) => a.time - b.time);
@@ -766,11 +879,51 @@ function renderRecordingMarks() {
         })
         .join("")
     : "";
-  container.innerHTML = `<div class="integrated-timeline"><div class="seek-track"><span id="recording-progress"></span><input type="range" id="recording-seek" aria-label="Seek Recording" min="0" max="${ready ? duration : 1}" step="0.1" value="${player.currentTime}" ${ready ? "" : "disabled"}></div><div class="timeline-annotations" style="height:${lanes.length * 24}px">${marks}</div></div><div class="track-times"><span id="playback-time"></span><span>${notes.length} ${notes.length === 1 ? "mark" : "marks"}</span></div>`;
+  container.innerHTML = `<div class="integrated-timeline"><div class="seek-track"><span id="recording-progress"></span><span id="section-draft" hidden></span><input type="range" id="recording-seek" aria-label="Seek Recording" aria-describedby="timeline-hint" min="0" max="${ready ? duration : 1}" step="0.1" value="${player.currentTime}" ${ready ? "" : "disabled"}></div><div class="timeline-annotations" style="height:${lanes.length * 24}px">${marks}</div></div><div class="track-times"><span id="playback-time"></span><span>${notes.length} ${notes.length === 1 ? "mark" : "marks"}</span></div><p id="timeline-hint" class="timeline-hint"></p>`;
   $("#recording-seek").oninput = (e) => {
     if (ready) player.currentTime = Number(e.target.value);
+    if (selectingSection) {
+      sectionPreview = {
+        start: Math.min(sectionAnchor, player.currentTime),
+        end: Math.max(sectionAnchor, player.currentTime),
+      };
+      updateSectionSelection();
+    }
     updatePlayhead();
   };
+  cancelTimelineDrag = bindTimelineSelection($(".seek-track"), {
+    duration: () => player.duration,
+    enabled: () => selectingSection,
+    preview: (range) => {
+      $("#recording-seek").focus({ preventScroll: true });
+      player.pause();
+      selectingSection = true;
+      sectionPreview = range;
+      updateSectionSelection();
+    },
+    commit: (range) => selectRecordingSection(range).catch(toastError),
+    cancel: () => {
+      selectingSection = false;
+      sectionPreview = null;
+      updateSectionSelection();
+    },
+  });
+  $("#recording-seek").onkeydown = (e) => {
+    if (e.key === "Escape") {
+      cancelTimelineDrag?.();
+      selectingSection = false;
+      sectionPreview = null;
+      updateSectionSelection();
+    } else if (
+      e.key === "Enter" &&
+      selectingSection &&
+      sectionPreview?.end - sectionPreview?.start >= 0.1
+    ) {
+      e.preventDefault();
+      selectRecordingSection(sectionPreview).catch(toastError);
+    }
+  };
+  updateSectionSelection();
   container.querySelectorAll("[data-recording-mark]").forEach((button) => {
     button.onclick = () =>
       jumpToRecordingNote(
@@ -936,6 +1089,8 @@ async function saveNote(e) {
         : {}),
     });
     $("#note-body").value = "";
+    selectingSection = false;
+    sectionPreview = null;
     if ($("#recording-scope")) {
       $("#recording-scope").value = "point";
       $("#section-times").hidden = true;
