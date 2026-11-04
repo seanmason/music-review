@@ -206,6 +206,9 @@ test("private library, session access and persisted collaborative notes", async 
           page: 1,
           x: 0.2,
           y: 0.4,
+          width: 0.3,
+          height: 0.15,
+          locationLabel: "Bars 9–12",
         },
       });
       assert.equal(n.status, 201);
@@ -225,6 +228,9 @@ test("private library, session access and persisted collaborative notes", async 
       assert.equal(data.notes[0].editable, true);
       assert.equal(data.notes[1].editable, false);
       assert.equal(data.notes[0].x, 0.2);
+      assert.equal(data.notes[0].width, 0.3);
+      assert.equal(data.notes[0].height, 0.15);
+      assert.equal(data.notes[0].location_label, "Bars 9–12");
       assert.equal(data.notes[0].owner, undefined);
       assert.equal(
         (
@@ -264,6 +270,31 @@ test("private library, session access and persisted collaborative notes", async 
       );
     },
   );
+  await t.test(
+    "rejects invalid score regions without losing existing annotations",
+    async () => {
+      for (const anchor of [
+        { x: 0.9, y: 0.1, width: 0.2, height: 0.1 },
+        { x: 0.1, y: 0.9, width: 0.1, height: 0.2 },
+        { x: 0.1, y: 0.1, width: -0.1, height: 0.2 },
+        { x: 0.1, y: 0.1, width: 0.2 },
+        { x: 2, y: 0.1 },
+        { width: 0.2, height: 0.2 },
+      ]) {
+        assert.equal(
+          (
+            await req(`/sessions/${sessionId}/notes`, {
+              body: { body: "Invalid region", scoreId, page: 1, ...anchor },
+            })
+          ).status,
+          400,
+        );
+      }
+      const saved = (await req(`/sessions/${sessionId}`)).data.notes;
+      assert.equal(saved.length, 2);
+      assert.equal(saved[0].location_label, "Bars 9–12");
+    },
+  );
   await t.test("rejects cross-origin changes", async () => {
     const r = await fetch(base + "/api/sessions", {
       method: "POST",
@@ -283,6 +314,8 @@ test("private library, session access and persisted collaborative notes", async 
     assert.equal(s.status, 200);
     assert.equal(s.data.notes[0].body, "Updated question");
     assert.equal(s.data.files.length, 2);
+    assert.equal(s.data.notes[0].width, 0.3);
+    assert.equal(s.data.notes[0].location_label, "Bars 9–12");
   });
   await t.test(
     "rotating a code revokes old access, deletion cleans up session",

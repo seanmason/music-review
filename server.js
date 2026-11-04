@@ -31,6 +31,21 @@ CREATE TABLE IF NOT EXISTS auth(token TEXT PRIMARY KEY,session_id TEXT REFERENCE
 CREATE TABLE IF NOT EXISTS files(id TEXT PRIMARY KEY,session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,name TEXT NOT NULL,kind TEXT NOT NULL,stored TEXT NOT NULL,created TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS notes(id TEXT PRIMARY KEY,session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,author TEXT NOT NULL,owner TEXT NOT NULL,kind TEXT NOT NULL,body TEXT NOT NULL,audio_id TEXT REFERENCES files(id),time REAL,score_id TEXT REFERENCES files(id),page INTEGER,x REAL,y REAL,parent_id TEXT REFERENCES notes(id) ON DELETE CASCADE,created TEXT NOT NULL);
 `);
+// Additive migration preserves existing page notes and point annotations.
+const noteColumns = new Set(
+  db
+    .prepare("PRAGMA table_info(notes)")
+    .all()
+    .map((c) => c.name),
+);
+for (const [name, type] of [
+  ["width", "REAL"],
+  ["height", "REAL"],
+  ["location_label", "TEXT"],
+]) {
+  if (!noteColumns.has(name))
+    db.exec(`ALTER TABLE notes ADD COLUMN ${name} ${type}`);
+}
 const hash = (s) => createHash("sha256").update(s).digest("hex");
 const cleanCode = (s) =>
   String(s || "")
@@ -360,6 +375,23 @@ app.post("/api/sessions/:id/notes", access, (req, res) => {
     req.body.x <= 1 &&
     req.body.y >= 0 &&
     req.body.y <= 1;
+  const hasPoint = req.body.x != null || req.body.y != null;
+  if (hasPoint && !coords) throw fail(400, "Select a valid spot on the score.");
+  const hasRegion = req.body.width != null || req.body.height != null;
+  const width = hasRegion ? req.body.width : null;
+  const height = hasRegion ? req.body.height : null;
+  if (
+    hasRegion &&
+    (!coords ||
+      !Number.isFinite(width) ||
+      !Number.isFinite(height) ||
+      width <= 0 ||
+      height <= 0 ||
+      req.body.x + width > 1.000001 ||
+      req.body.y + height > 1.000001)
+  )
+    throw fail(400, "The selected passage must fit on the score page.");
+  const locationLabel = score ? text(req.body.locationLabel, 80) : "";
   const parent = req.body.parentId
     ? db
         .prepare(
@@ -369,7 +401,11 @@ app.post("/api/sessions/:id/notes", access, (req, res) => {
     : null;
   if (req.body.parentId && !parent) throw fail(400, "Original note not found.");
   const id = randomUUID();
-  db.prepare("INSERT INTO notes VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)").run(
+  db.prepare(
+    `INSERT INTO notes
+    (id,session_id,author,owner,kind,body,audio_id,time,score_id,page,x,y,parent_id,created,width,height,location_label)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+  ).run(
     id,
     req.params.id,
     req.identity.name,
@@ -384,6 +420,9 @@ app.post("/api/sessions/:id/notes", access, (req, res) => {
     coords ? req.body.y : null,
     parent?.id || null,
     new Date().toISOString(),
+    width,
+    height,
+    locationLabel,
   );
   res.status(201).json({ id });
 });
@@ -430,16 +469,14 @@ app.use((err, req, res, next) => {
         ? 400
         : err.status || 500;
   if (status === 500) console.error(err);
-  res
-    .status(status)
-    .json({
-      error:
-        err.code === "LIMIT_FILE_SIZE"
-          ? "This file is too large. The limit is 150 MB per file."
-          : status === 500
-            ? "Something went wrong. Please try again."
-            : err.message,
-    });
+  res.status(status).json({
+    error:
+      err.code === "LIMIT_FILE_SIZE"
+        ? "This file is too large. The limit is 150 MB per file."
+        : status === 500
+          ? "Something went wrong. Please try again."
+          : err.message,
+  });
 });
 const server = app.listen(
   Number(process.env.PORT || 3000),

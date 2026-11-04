@@ -1,3 +1,4 @@
+import { setupWorkspaceLayout } from "/layout.js";
 import * as pdfjs from "/pdfjs/pdf.mjs";
 pdfjs.GlobalWorkerOptions.workerSrc = "/pdfjs/pdf.worker.mjs";
 const $ = (s, el = document) => el.querySelector(s);
@@ -14,7 +15,11 @@ let me,
   kind = "note",
   filter = "all",
   pdfGeneration = 0,
-  renderTask;
+  renderTask,
+  renderSequence = 0,
+  zoom = "width",
+  activePin = null,
+  resizeObserver;
 const codes = new Map();
 const esc = (v) =>
   String(v ?? "").replace(
@@ -93,6 +98,7 @@ function login(owner = false) {
   };
 }
 async function library() {
+  resizeObserver?.disconnect();
   session = null;
   location.hash = "";
   const list = await api("/sessions");
@@ -138,7 +144,10 @@ function createSession() {
 async function openSession(id) {
   session = await api(`/sessions/${id}`);
   location.hash = id;
+  resizeObserver?.disconnect();
   pdf = null;
+  zoom = "width";
+  activePin = null;
   page = 1;
   point = null;
   pinning = false;
@@ -156,7 +165,7 @@ const options = (type) =>
     .join("");
 function workspace() {
   account();
-  app.innerHTML = `<section class="workspace">${me.admin ? '<button class="quiet back" id="back">← All sessions</button>' : ""}<div class="session-heading"><div><div class="eyebrow">Listening room</div><h1>${esc(session.title)}</h1>${session.description ? `<p class="muted">${esc(session.description)}</p>` : '<p class="muted">Listen, follow the score, and leave a note along the way.</p>'}</div>${me.admin ? '<div class="actions"><button id="add-files">+ Add files</button><button class="primary" id="share">Share session</button><button class="quiet" id="session-menu" aria-label="Session options">•••</button></div>' : ""}</div>${me.admin ? `<div class="upload-zone" id="upload-zone" ${session.files.length ? "hidden" : ""}><label for="files">Add scores and recordings</label><input type="file" id="files" accept=".pdf,.aac,.m4a,.mp3,.wav,.ogg,.flac,.webm,.mp4" multiple><p class="muted">PDF scores and audio files · Up to 150 MB each. Audio is prepared for easy playback.</p><p id="upload-status" role="status"></p></div>` : ""}<div class="review-grid"><div><section class="panel"><div class="panel-head"><h2>◎ &nbsp; The score</h2>${scoreId ? `<label class="sr-only" for="score-select">Choose score</label><select id="score-select">${options("score")}</select>` : ""}</div>${scoreId ? `<div class="score-toolbar"><div class="page-controls"><button id="prev-page" aria-label="Previous page">←</button><span id="page-label">Page 1</span><button id="next-page" aria-label="Next page">→</button></div><button class="quiet" id="pin-mode">＋ Mark a spot</button><a id="download-score" href="${fileUrl(scoreId)}" target="_blank" rel="noopener">Open PDF ↗</a></div><div class="score-stage" id="score-stage"><div class="score-paper" id="score-paper"><canvas id="score-canvas" aria-label="Score page"></canvas><div id="pins"></div></div><p id="score-status" role="status">Opening score…</p></div><p class="hint" id="score-hint">Use “Mark a spot” to attach a note to a place on the score.</p>` : '<div class="score-stage"><div class="empty">No score added yet.<br>You can still listen and leave notes.</div></div>'}</section><section class="panel audio-panel"><div class="audio-title"><h2>♫ &nbsp; The recording</h2>${audioId ? `<label class="sr-only" for="audio-select">Choose recording</label><select id="audio-select">${options("audio")}</select>` : ""}</div>${audioId ? `<audio id="player" controls preload="metadata" src="${fileUrl(audioId)}"></audio><div class="audio-tools"><div><button id="rewind">↶ 10 sec</button> <button id="forward">10 sec ↷</button></div><label for="speed">Speed <select id="speed"><option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1" selected>1×</option><option value="1.25">1.25×</option></select></label></div><p id="audio-error" class="error" role="alert" hidden></p>` : '<p class="muted">No recording added yet. Notes on the score are welcome.</p>'}</section><p class="footnote">Your notes are saved here and visible to everyone with access to this session.</p></div><aside class="panel notes-panel"><div class="panel-head"><h2>Notes <span class="muted" id="note-count"></span></h2><label for="filter" class="sr-only">Filter notes</label><select id="filter" class="filter"><option value="all">All notes</option><option value="question">Questions</option><option value="bookmark">Bookmarks</option></select></div><form class="note-compose" id="note-form"><div class="kind-tabs" aria-label="Note type"><button type="button" class="active" data-kind="note" aria-pressed="true">Note</button><button type="button" data-kind="question" aria-pressed="false">Question</button><button type="button" data-kind="bookmark" aria-pressed="false">Bookmark</button></div><label for="note-body">What would you like to note?</label><textarea id="note-body" rows="3" maxlength="5000" required placeholder="A thought, a question, something to return to…"></textarea>${audioId ? '<label class="check"><input type="checkbox" id="attach-time" checked><span>Link to <span id="current-time">0:00</span> in the recording</span></label>' : ""}${scoreId ? '<label class="check"><input type="checkbox" id="attach-score"><span>Link to <span id="current-page">page 1</span> of the score</span></label>' : ""}<div class="attachment" id="point-label"></div><p class="error" id="note-error" role="alert" hidden></p><button class="primary" type="submit">Save note</button></form><div class="notes-list" id="notes-list"></div></aside></div></section>`;
+  app.innerHTML = `<section class="workspace">${me.admin ? '<button class="quiet back" id="back">← All sessions</button>' : ""}<div class="session-heading"><div><div class="eyebrow">Listening room</div><h1>${esc(session.title)}</h1>${session.description ? `<p class="muted">${esc(session.description)}</p>` : '<p class="muted">Listen, follow the score, and leave a note along the way.</p>'}</div>${me.admin ? '<div class="actions"><button id="add-files">+ Add files</button><button class="primary" id="share">Share session</button><button class="quiet" id="session-menu" aria-label="Session options">•••</button></div>' : ""}</div>${me.admin ? `<div class="upload-zone" id="upload-zone" ${session.files.length ? "hidden" : ""}><label for="files">Add scores and recordings</label><input type="file" id="files" accept=".pdf,.aac,.m4a,.mp3,.wav,.ogg,.flac,.webm,.mp4" multiple><p class="muted">PDF scores and audio files · Up to 150 MB each. Audio is prepared for easy playback.</p><p id="upload-status" role="status"></p></div>` : ""}<div class="layout-tools"><span>Drag a pane’s handle to swap positions. Drag the dividers to resize.</span><button id="flip-layout">Switch sides</button><button id="reset-layout">Reset layout</button></div><div class="review-grid" id="review-grid"><section class="panel score-panel" data-pane="score"><div class="panel-head"><h2>Score</h2><button class="pane-handle" draggable="false" data-move="score" aria-label="Move score pane" title="Drag to another pane, or click to choose a position">⠿</button>${scoreId ? `<label class="sr-only" for="score-select">Choose score</label><select id="score-select">${options("score")}</select>` : ""}</div>${scoreId ? `<div class="score-toolbar"><div class="page-controls"><button id="prev-page" aria-label="Previous page">←</button><span id="page-label">Page 1</span><button id="next-page" aria-label="Next page">→</button></div><button class="quiet" id="pin-mode">＋ Mark passage</button><label class="sr-only" for="score-zoom">Score zoom</label><select id="score-zoom"><option value="page">Fit page</option><option value="width" selected>Fit width</option><option value="1.5">150%</option><option value="2">200%</option><option value="3">300%</option></select><a id="download-score" href="${fileUrl(scoreId)}" target="_blank" rel="noopener">Open PDF ↗</a></div><div class="score-stage" id="score-stage"><div class="score-paper" id="score-paper"><canvas id="score-canvas" tabindex="0" aria-label="Score page" aria-describedby="score-hint"></canvas><div id="pins"></div></div><p id="score-status" role="status">Opening score…</p></div><p class="hint" id="score-hint">Choose “Mark passage”, then click a note or drag around a phrase.</p>` : '<div class="score-stage"><div class="empty">No score added yet.<br>You can still listen and leave notes.</div></div>'}</section><section class="panel audio-panel" data-pane="audio"><div class="audio-title"><h2>Recording</h2><button class="pane-handle" draggable="false" data-move="audio" aria-label="Move recording pane" title="Drag to another pane, or click to choose a position">⠿</button>${audioId ? `<label class="sr-only" for="audio-select">Choose recording</label><select id="audio-select">${options("audio")}</select>` : ""}</div>${audioId ? `<audio id="player" controls preload="metadata" src="${fileUrl(audioId)}"></audio><div class="audio-tools"><div><button id="rewind">↶ 10 sec</button> <button id="forward">10 sec ↷</button></div><label for="speed">Speed <select id="speed"><option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1" selected>1×</option><option value="1.25">1.25×</option></select></label></div><p id="audio-error" class="error" role="alert" hidden></p>` : '<p class="muted">No recording added yet. Notes on the score are welcome.</p>'}</section><aside class="panel notes-panel" data-pane="notes"><div class="panel-head"><h2>Notes <span class="muted" id="note-count"></span></h2><button class="pane-handle" draggable="false" data-move="notes" aria-label="Move notes pane" title="Drag to another pane, or click to choose a position">⠿</button><label for="filter" class="sr-only">Filter notes</label><select id="filter" class="filter"><option value="all">All notes</option><option value="question">Questions</option><option value="bookmark">Bookmarks</option></select></div><div class="notes-scroll"><form class="note-compose" id="note-form"><div class="kind-tabs" aria-label="Note type"><button type="button" class="active" data-kind="note" aria-pressed="true">Note</button><button type="button" data-kind="question" aria-pressed="false">Question</button><button type="button" data-kind="bookmark" aria-pressed="false">Bookmark</button></div><label for="note-body">What would you like to note?</label><textarea id="note-body" rows="3" maxlength="5000" required placeholder="A thought, a question, something to return to…"></textarea>${audioId ? '<label class="check"><input type="checkbox" id="attach-time" checked><span>Link to <span id="current-time">0:00</span> in the recording</span></label>' : ""}${scoreId ? '<label class="check"><input type="checkbox" id="attach-score"><span>Link to <span id="current-page">page 1</span> of the score</span></label>' : ""}<div class="attachment" id="point-label"></div>${scoreId ? '<div id="location-field" hidden><label for="location-label">Location label <span class="muted">(optional)</span></label><input id="location-label" maxlength="80" placeholder="e.g. Bars 9–12, left hand"><button type="button" class="quiet" id="clear-mark">Clear mark</button></div>' : ""}<p class="error" id="note-error" role="alert" hidden></p><button class="primary" type="submit">Save note</button></form><div class="notes-list" id="notes-list"></div><p class="hint">Notes are shared with everyone in this session.</p></div></aside><div class="pane-divider column-divider" id="column-divider" role="separator" tabindex="0" aria-label="Resize main pane" aria-orientation="vertical"></div><div class="pane-divider row-divider" id="row-divider" role="separator" tabindex="0" aria-label="Resize side panes" aria-orientation="horizontal"></div></div></section>`;
   if (me.admin) {
     $("#back").onclick = () => library().catch(toastError);
     $("#add-files").onclick = () => {
@@ -212,52 +221,40 @@ function workspace() {
     $("#score-select").onchange = async (e) => {
       scoreId = e.target.value;
       page = 1;
-      point = null;
       $("#download-score").href = fileUrl(scoreId);
       await loadScore();
     };
     $("#prev-page").onclick = async () => {
       if (page > 1) {
         page--;
-        point = null;
         await renderPage();
       }
     };
     $("#next-page").onclick = async () => {
       if (pdf && page < pdf.numPages) {
         page++;
-        point = null;
         await renderPage();
       }
     };
-    $("#pin-mode").onclick = () => {
-      pinning = !pinning;
-      $("#score-paper").classList.toggle("pinning", pinning);
-      $("#pin-mode").textContent = pinning
-        ? "Cancel marking"
-        : "＋ Mark a spot";
-      $("#score-hint").textContent = pinning
-        ? "Click a place on the score, then write your note."
-        : "Use “Mark a spot” to attach a note to a place on the score.";
-    };
-    $("#score-canvas").onclick = (e) => {
-      if (!pinning) return;
-      const r = e.target.getBoundingClientRect();
-      point = {
-        x: (e.clientX - r.left) / r.width,
-        y: (e.clientY - r.top) / r.height,
-      };
-      $("#attach-score").checked = true;
-      pinning = false;
-      $("#score-paper").classList.remove("pinning");
-      $("#pin-mode").textContent = "＋ Mark a spot";
-      $("#score-hint").textContent =
-        "Spot selected. Write your note and choose Save note.";
-      drawPins();
-      updateAttachments();
-      $("#note-body").focus();
-    };
+    setupScoreSelection();
   }
+  setupWorkspaceLayout(() => scheduleScoreRender());
+  if (scoreId) {
+    resizeObserver = new ResizeObserver(() => scheduleScoreRender());
+    resizeObserver.observe($("#score-stage"));
+    $("#score-zoom").onchange = (e) => {
+      zoom = e.target.value;
+      renderPage().catch(toastError);
+    };
+    $("#clear-mark").onclick = () => {
+      point = null;
+      $("#location-label").value = "";
+      updateAttachments();
+      drawPins();
+    };
+    $("#attach-score").onchange = updateAttachments;
+  }
+
   document.querySelectorAll("[data-kind]").forEach(
     (b) =>
       (b.onclick = () => {
@@ -302,6 +299,7 @@ async function loadScore() {
 }
 async function renderPage() {
   if (!pdf || !$("#score-canvas")) return;
+  const sequence = ++renderSequence;
   if (renderTask) {
     renderTask.cancel();
     try {
@@ -313,6 +311,7 @@ async function renderPage() {
     doc = pdf;
   const p = await doc.getPage(requestedPage);
   if (
+    sequence !== renderSequence ||
     generation !== pdfGeneration ||
     requestedPage !== page ||
     !$("#score-canvas")
@@ -320,13 +319,20 @@ async function renderPage() {
     return;
   const canvas = $("#score-canvas"),
     base = p.getViewport({ scale: 1 });
-  const width = Math.max(250, $("#score-stage").clientWidth - 48),
-    scale = width / base.width,
-    pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+  const stage = $("#score-stage");
+  const availableWidth = Math.max(180, stage.clientWidth - 40);
+  const fitWidth = availableWidth / base.width;
+  const scale =
+    zoom === "page"
+      ? Math.min(fitWidth, Math.max(180, stage.clientHeight - 40) / base.height)
+      : fitWidth * (zoom === "width" ? 1 : Number(zoom));
+  const width = base.width * scale;
+  const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
   const viewport = p.getViewport({ scale: scale * pixelRatio });
   canvas.width = viewport.width;
   canvas.height = viewport.height;
   canvas.style.width = `${width}px`;
+  $("#score-paper").style.width = `${width}px`;
   renderTask = p.render({ canvasContext: canvas.getContext("2d"), viewport });
   try {
     await renderTask.promise;
@@ -334,6 +340,7 @@ async function renderPage() {
     if (e.name === "RenderingCancelledException") return;
     throw e;
   }
+  if (sequence !== renderSequence) return;
   $("#score-status").textContent = "";
   $("#page-label").textContent = `Page ${page} of ${pdf.numPages}`;
   $("#prev-page").disabled = page <= 1;
@@ -346,10 +353,15 @@ async function renderPage() {
   drawPins();
 }
 function updateAttachments() {
-  if ($("#current-page")) $("#current-page").textContent = `page ${page}`;
+  if ($("#current-page"))
+    $("#current-page").textContent = point
+      ? `marked ${point.width ? "passage" : "spot"} on page ${point.page || page}`
+      : `page ${page}`;
   $("#point-label").textContent = point
-    ? "A spot on the score is selected."
+    ? "Exact score location selected. Playback pauses when you mark it."
     : "";
+  if ($("#location-field"))
+    $("#location-field").hidden = !$("#attach-score").checked;
 }
 function drawPins() {
   if (!$("#pins")) return;
@@ -357,31 +369,147 @@ function drawPins() {
     (n) =>
       !n.parent_id && n.score_id === scoreId && n.page === page && n.x !== null,
   );
-  $("#pins").innerHTML =
-    pins
-      .map(
-        (n, i) =>
-          `<button class="pin" data-pin="${n.id}" aria-label="Go to note: ${esc(n.body.slice(0, 80))}">${i + 1}</button>`,
-      )
-      .join("") +
-    (point
-      ? '<span class="pin selected" id="draft-pin" aria-label="Selected spot">+</span>'
-      : "");
-  pins.forEach((n) => {
-    const p = $(`[data-pin="${n.id}"]`);
-    p.style.left = `${n.x * 100}%`;
-    p.style.top = `${n.y * 100}%`;
-    p.onclick = () => {
-      filter = "all";
-      $("#filter").value = "all";
-      renderNotes();
-      focusNote(n.id);
-    };
-  });
-  if (point) {
-    $("#draft-pin").style.left = `${point.x * 100}%`;
-    $("#draft-pin").style.top = `${point.y * 100}%`;
+  $("#pins").replaceChildren();
+  function draw(n, i, draft = false) {
+    const region = n.width > 0 && n.height > 0;
+    const el = document.createElement(draft ? "span" : "button");
+    el.className = `${region ? "score-region" : "pin"} ${draft ? "draft-mark" : ""} ${activePin === n.id && !draft ? "active-mark" : ""}`;
+    el.style.left = `${n.x * 100}%`;
+    el.style.top = `${n.y * 100}%`;
+    if (region) {
+      el.style.width = `${n.width * 100}%`;
+      el.style.height = `${n.height * 100}%`;
+    }
+    el.textContent = draft ? "+" : String(i + 1);
+    el.setAttribute(
+      "aria-label",
+      draft
+        ? "Selected passage"
+        : `Go to note: ${n.location_label || n.body.slice(0, 80)}`,
+    );
+    if (!draft) {
+      el.dataset.pin = n.id;
+      el.onclick = () => {
+        activePin = n.id;
+        filter = "all";
+        $("#filter").value = "all";
+        renderNotes();
+        drawPins();
+        focusNote(n.id);
+      };
+    }
+    $("#pins").append(el);
   }
+  pins.forEach((n, i) => draw(n, i));
+  if (
+    point &&
+    (!point.scoreId || (point.scoreId === scoreId && point.page === page))
+  )
+    draw(point, 0, true);
+}
+function setupScoreSelection() {
+  const canvas = $("#score-canvas");
+  let origin = null;
+  const coords = (e) => {
+    const r = canvas.getBoundingClientRect();
+    return {
+      x: Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)),
+      y: Math.max(0, Math.min(1, (e.clientY - r.top) / r.height)),
+    };
+  };
+  function finish() {
+    point = { ...point, scoreId, page };
+    origin = null;
+    pinning = false;
+    $("#score-paper").classList.remove("pinning");
+    $("#pin-mode").textContent = "＋ Mark passage";
+    $("#attach-score").checked = true;
+    $("#player")?.pause();
+    $("#score-hint").textContent =
+      "Location selected. Add a label if helpful, then save your note.";
+    updateAttachments();
+    drawPins();
+    $("#note-body").focus({ preventScroll: true });
+    if (matchMedia("(max-width: 600px)").matches)
+      $("#note-body").scrollIntoView({ block: "center", behavior: "smooth" });
+  }
+  $("#pin-mode").onclick = () => {
+    pinning = !pinning;
+    $("#score-paper").classList.toggle("pinning", pinning);
+    $("#pin-mode").textContent = pinning ? "Cancel marking" : "＋ Mark passage";
+    $("#score-hint").textContent = pinning
+      ? "Click a note or drag a box around a passage. Keyboard: focus the score, use arrows, then Enter. Escape cancels."
+      : "Choose “Mark passage”, then click a note or drag around a phrase.";
+  };
+  canvas.onpointerdown = (e) => {
+    if (!pinning || e.button !== 0) return;
+    e.preventDefault();
+    origin = coords(e);
+    point = { ...origin };
+    canvas.setPointerCapture(e.pointerId);
+    drawPins();
+  };
+  canvas.onpointermove = (e) => {
+    if (!origin) return;
+    const end = coords(e),
+      width = Math.abs(end.x - origin.x),
+      height = Math.abs(end.y - origin.y);
+    point =
+      width > 0.005 && height > 0.005
+        ? {
+            x: Math.min(origin.x, end.x),
+            y: Math.min(origin.y, end.y),
+            width,
+            height,
+          }
+        : { ...origin };
+    drawPins();
+  };
+  canvas.onpointerup = (e) => {
+    if (!origin) return;
+    canvas.releasePointerCapture(e.pointerId);
+    finish();
+  };
+  canvas.onpointercancel = () => {
+    origin = null;
+    point = null;
+    drawPins();
+    updateAttachments();
+  };
+  canvas.onkeydown = (e) => {
+    if (!pinning) return;
+    if (e.key === "Escape") {
+      point = null;
+      $("#pin-mode").click();
+      drawPins();
+      updateAttachments();
+      return;
+    }
+    if (
+      !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Enter"].includes(
+        e.key,
+      )
+    )
+      return;
+    e.preventDefault();
+    point ||= { x: 0.5, y: 0.5 };
+    const step = e.shiftKey ? 0.002 : 0.01;
+    if (e.key === "Enter") return finish();
+    const dx =
+      e.key === "ArrowRight" ? step : e.key === "ArrowLeft" ? -step : 0;
+    const dy = e.key === "ArrowDown" ? step : e.key === "ArrowUp" ? -step : 0;
+    point = {
+      x: Math.max(0, Math.min(1, point.x + dx)),
+      y: Math.max(0, Math.min(1, point.y + dy)),
+    };
+    drawPins();
+  };
+}
+function scheduleScoreRender() {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    if (pdf && $("#score-canvas")) renderPage().catch(toastError);
+  }, 120);
 }
 function focusNote(id) {
   const n = $(`[data-note="${id}"]`);
@@ -401,7 +529,7 @@ function renderNotes() {
     list
       .map(
         (n) =>
-          `<article class="note" data-note="${n.id}"><div class="note-meta"><span class="tag ${n.kind}">${n.kind}</span><span>${esc(n.author)}</span></div><div>${n.audio_id ? `<button class="jump" data-jump-audio="${n.id}">▶ ${clock(n.time)}</button>` : ""}${n.score_id ? `<button class="jump" data-jump-score="${n.id}">◎ Page ${n.page}</button>` : ""}</div><p class="note-body">${esc(n.body)}</p>${actions(n)}${session.notes
+          `<article class="note" data-note="${n.id}"><div class="note-meta"><span class="tag ${n.kind}">${n.kind}</span><span>${esc(n.author)}</span></div><div>${n.audio_id ? `<button class="jump" data-jump-audio="${n.id}">▶ ${clock(n.time)}</button>` : ""}${n.score_id ? `<button class="jump" data-jump-score="${n.id}">◎ ${esc(n.location_label || (n.x !== null ? (n.width ? "Marked passage" : "Marked spot") : "Page " + n.page))}${n.x !== null || n.location_label ? ` · p. ${n.page}` : ""}</button>` : ""}</div><p class="note-body">${esc(n.body)}</p>${actions(n)}${session.notes
             .filter((r) => r.parent_id === n.id)
             .map(
               (r) =>
@@ -447,7 +575,6 @@ function renderNotes() {
       (b) =>
         (b.onclick = async () => {
           const n = session.notes.find((n) => n.id === b.dataset.jumpScore);
-          point = null;
           page = n.page;
           if (scoreId !== n.score_id) {
             scoreId = n.score_id;
@@ -455,18 +582,29 @@ function renderNotes() {
             $("#download-score").href = fileUrl(scoreId);
             await loadScore();
           } else await renderPage();
-          $("#score-stage").scrollTop =
-            n.y !== null
-              ? Math.max(
-                  0,
-                  n.y * $("#score-canvas").getBoundingClientRect().height -
-                    $("#score-stage").clientHeight / 2,
-                )
-              : 0;
-          $("#score-stage").scrollIntoView({
-            behavior: "smooth",
-            block: "center",
-          });
+          activePin = n.id;
+          drawPins();
+          const stage = $("#score-stage"),
+            paper = $("#score-paper"),
+            rect = paper.getBoundingClientRect(),
+            area = stage.getBoundingClientRect();
+          if (n.x !== null) {
+            stage.scrollLeft +=
+              rect.left -
+              area.left +
+              (n.x + (n.width || 0) / 2) * rect.width -
+              stage.clientWidth / 2;
+            stage.scrollTop +=
+              rect.top -
+              area.top +
+              (n.y + (n.height || 0) / 2) * rect.height -
+              stage.clientHeight / 2;
+          } else {
+            stage.scrollTop = 0;
+            stage.scrollLeft = 0;
+          }
+          if (matchMedia("(max-width: 600px)").matches)
+            stage.scrollIntoView({ behavior: "smooth", block: "center" });
         }),
     );
   $("#notes-list")
@@ -521,16 +659,20 @@ async function saveNote(e) {
       kind,
       audioId: includeAudio ? audioId : null,
       time: includeAudio ? $("#player").currentTime : null,
-      scoreId: includeScore ? scoreId : null,
-      page: includeScore ? page : null,
-      ...(includeScore && point ? point : {}),
+      scoreId: includeScore ? point?.scoreId || scoreId : null,
+      page: includeScore ? point?.page || page : null,
+      locationLabel: includeScore ? $("#location-label").value : "",
+      ...(includeScore && point
+        ? { x: point.x, y: point.y, width: point.width, height: point.height }
+        : {}),
     });
     $("#note-body").value = "";
+    if ($("#location-label")) $("#location-label").value = "";
     point = null;
     updateAttachments();
     if ($("#score-hint"))
       $("#score-hint").textContent =
-        "Use “Mark a spot” to attach a note to a place on the score.";
+        "Choose “Mark passage”, then click a note or drag around a phrase.";
     $("#note-error").hidden = true;
     await refreshNotes();
     toast("Note saved.");

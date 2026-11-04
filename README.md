@@ -5,7 +5,8 @@ A small, self-hosted web app for listening to recordings alongside scores and sh
 ## Included
 
 - Multiple PDF scores and audio recordings in each session.
-- In-page PDF viewer, page navigation, and clickable notes pinned to a location on a page.
+- In-page PDF viewer with fit-page/fit-width views and zoom up to 300%. Click a point or draw a box around a musical passage, with an optional label such as “Bars 9–12”. Selecting its note centers and highlights the exact location.
+- A full-height score pane alongside recording and notes panes. Drag the handles to swap panes, drag the dividers to resize, or switch sides. Layout preferences are remembered on the current device, with a reset button and keyboard alternatives. Small phone screens use a stacked layout.
 - Audio playback, seeking, skip-back/forward controls, and playback speed.
 - Notes, questions, and bookmarks linked to an audio time, score page, both, or neither.
 - Replies and editing/deletion of your own notes. The owner can manage all notes.
@@ -131,4 +132,4 @@ docker compose -f compose.production.yaml exec app node --input-type=module -e \
   "import { DatabaseSync } from 'node:sqlite'; const db = new DatabaseSync('/app/data/review.sqlite'); db.exec('DELETE FROM auth'); db.close();"
 ```
 
-Score pins are manual page locations. There is no automatic score following, transcription, waveform alignment, email notification, or verified multi-user account system. The original PDF is available via “Open PDF”; the visual canvas itself does not provide an accessible transcription of musical notation. Use one app replica with its local persistent volume. File/annotation storage has no total quota; monitor disk space and keep backups.
+Score markers are manual points or rectangular regions, stored as proportions of the source PDF page so zooming and resizing preserve alignment. Bar/phrase labels are entered manually; the app does not recognize measures automatically. A passage covering multiple systems or pages can use separate linked notes. Selecting a score location pauses playback to hold the audio time while you write. An unsaved marked location stays anchored to its original page if you browse elsewhere. Older page-only notes and point pins remain supported. There is no automatic score following, transcription, waveform alignment, email notification, or verified multi-user account system. The original PDF is available via “Open PDF”; the visual canvas itself does not provide an accessible transcription of musical notation. Use one app replica with its local persistent volume. File/annotation storage has no total quota; monitor disk space and keep backups.
