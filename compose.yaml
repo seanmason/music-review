@@ -1,0 +1,14 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Run npm run setup or create .env first}
+      COOKIE_SECURE: "false"
+    volumes:
+      - review-data:/app/data
+    stop_grace_period: 30s
+volumes:
+  review-data:
