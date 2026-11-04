@@ -4,16 +4,16 @@ A small, self-hosted web app for listening to recordings alongside scores and sh
 
 ## Included
 
-- Multiple PDF scores and audio recordings in each session.
-- In-page PDF viewer with fit-page/fit-width views and zoom up to 300%. Click a point or draw a box around a musical passage, with an optional label such as “Bars 9–12”. Selecting its note centers and highlights the exact location.
+- Multiple PDF scores, audio recordings, and videos in each session.
+- In-page PDF viewer that defaults to fit page, with fit-width views and zoom up to 300%. Click a point or draw a box around a musical passage, with an optional label such as “Bars 9–12”. Selecting its note centers and highlights the exact location.
 - A full-height score pane alongside recording and notes panes. Drag the handles to swap panes, drag the dividers to resize, or switch sides. Layout preferences are remembered on the current device, with a reset button and keyboard alternatives. Small phone screens use a stacked layout.
 - Audio playback, seeking, skip-back/forward controls, and playback speed.
-- Notes, questions, and bookmarks linked to an audio time, score page, both, or neither.
-- Replies and editing/deletion of your own notes. The owner can manage all notes.
+- Notes and questions with an explicit attachment choice: score only, recording only, both, or general (no location). Existing bookmarks are migrated to ordinary notes.
+- Replies and editing/removal of your own notes. The owner can manage all notes. Remove is one click, with an Undo button shown for 15 seconds; replies follow their parent annotation. Removed annotations are hidden but retained in the database until the session is deleted.
 - Shared notes refresh every 20 seconds while a session is visible.
 - Random access codes, protected media, revocable access, and rate-limited sign-in.
 - SQLite and uploaded files in a persistent volume; no third-party accounts or storage required.
-- Audio conversion through FFmpeg so raw AAC and other formats play consistently in browsers.
+- Audio/video preparation through FFmpeg: raw AAC and other audio formats become M4A; videos become H.264/AAC MP4 up to 1280 pixels on the long side. HEVC and HDR phone video are converted for browser playback, including HDR-to-SDR tone mapping. MP4, MOV, and WebM uploads retain video; audio-only recordings keep the compact audio player.
 
 ## Run locally with Docker
 
@@ -50,7 +50,7 @@ node --env-file=.env scripts/import-example.js \
   "/path/to/score.pdf"
 ```
 
-This creates a session titled “Waltz in A minor” and prints its code. Each run creates a new session. The local example code is also saved in ignored `data/local-example.json`. The supplied files are not bundled in the application or committed to Git.
+This creates a session titled “Waltz in A minor” and prints its code. Set `SESSION_TITLE` to choose another title; video paths are accepted too. Each run creates a new session. The local example code is also saved in ignored `data/session-<id>.json`. The supplied files are not bundled in the application or committed to Git.
 
 ## Development without Docker
 
@@ -69,7 +69,7 @@ npm test
 npm audit
 ```
 
-Integration tests run a real temporary server/database, convert generated audio with FFmpeg, and verify authentication, session isolation, protected media/range requests, upload validation, annotations/replies, ownership, origin checks, restart persistence, code revocation, and session deletion.
+Integration tests run a real temporary server/database, convert generated audio and video with FFmpeg, and verify authentication, session isolation, protected media/range requests, upload validation, all attachment combinations, annotations/replies, remove/undo, ownership, origin checks, restart persistence, code revocation, and session deletion.
 
 ## Deploy to Amazon Lightsail
 
@@ -90,7 +90,7 @@ Use a **Lightsail Linux instance** with Docker Compose and a persistent disk. Th
 
 Caddy obtains and renews HTTPS certificates once DNS and ports are reachable. The production configuration enables secure cookies and trusts the single internal reverse proxy. Open `https://your-hostname`, sign in, and create a session. Share that address and a session code.
 
-The app container runs as a non-root user. Its health check verifies the HTTP service. Uploaded files are limited to 150 MB each; audio preparation is serialized and limited to five minutes per file to keep a small instance responsive. For long recordings, a larger instance or splitting the audio may be necessary.
+The app container runs as a non-root user. Its health check verifies the HTTP service. Uploaded files are limited to 150 MB each; media preparation is serialized and limited to five minutes for audio or fifteen minutes for video to keep a small instance responsive. For long recordings, a larger instance or splitting the audio may be necessary.
 
 ### Backup and restore
 
@@ -132,4 +132,4 @@ docker compose -f compose.production.yaml exec app node --input-type=module -e \
   "import { DatabaseSync } from 'node:sqlite'; const db = new DatabaseSync('/app/data/review.sqlite'); db.exec('DELETE FROM auth'); db.close();"
 ```
 
-Score markers are manual points or rectangular regions, stored as proportions of the source PDF page so zooming and resizing preserve alignment. Bar/phrase labels are entered manually; the app does not recognize measures automatically. A passage covering multiple systems or pages can use separate linked notes. Selecting a score location pauses playback to hold the audio time while you write. An unsaved marked location stays anchored to its original page if you browse elsewhere. Older page-only notes and point pins remain supported. There is no automatic score following, transcription, waveform alignment, email notification, or verified multi-user account system. The original PDF is available via “Open PDF”; the visual canvas itself does not provide an accessible transcription of musical notation. Use one app replica with its local persistent volume. File/annotation storage has no total quota; monitor disk space and keep backups.
+Score markers are manual points or rectangular regions, stored as proportions of the source PDF page so zooming and resizing preserve alignment. Bar/phrase labels are entered manually; the app does not recognize measures automatically. A passage covering multiple systems or pages can use separate linked notes. Selecting a score location or choosing a recording attachment pauses playback to hold the timestamp while you write. An unsaved marked location stays anchored to its original page if you browse elsewhere. Older page-only notes and point pins remain supported. There is no automatic score following, transcription, waveform alignment, email notification, or verified multi-user account system. The original PDF is available via “Open PDF”; the visual canvas itself does not provide an accessible transcription of musical notation. Use one app replica with its local persistent volume. File/annotation storage has no total quota; monitor disk space and keep backups.

@@ -42,10 +42,12 @@ for (const [name, type] of [
   ["width", "REAL"],
   ["height", "REAL"],
   ["location_label", "TEXT"],
+  ["deleted_at", "TEXT"],
 ]) {
   if (!noteColumns.has(name))
     db.exec(`ALTER TABLE notes ADD COLUMN ${name} ${type}`);
 }
+db.exec("UPDATE notes SET kind='note' WHERE kind='bookmark'");
 const hash = (s) => createHash("sha256").update(s).digest("hex");
 const cleanCode = (s) =>
   String(s || "")
@@ -175,7 +177,7 @@ app.get("/api/sessions", admin, (req, res) =>
   res.json(
     db
       .prepare(
-        `SELECT s.id,s.title,s.description,s.created,(SELECT COUNT(*) FROM files WHERE session_id=s.id) file_count,(SELECT COUNT(*) FROM notes WHERE session_id=s.id) note_count FROM sessions s ORDER BY created DESC`,
+        `SELECT s.id,s.title,s.description,s.created,(SELECT COUNT(*) FROM files WHERE session_id=s.id) file_count,(SELECT COUNT(*) FROM notes WHERE session_id=s.id AND deleted_at IS NULL) note_count FROM sessions s ORDER BY created DESC`,
       )
       .all(),
   ),
@@ -201,7 +203,9 @@ app.get("/api/sessions/:id", access, (req, res) => {
     )
     .all(req.params.id);
   const notes = db
-    .prepare("SELECT * FROM notes WHERE session_id=? ORDER BY created")
+    .prepare(
+      "SELECT * FROM notes WHERE session_id=? AND deleted_at IS NULL ORDER BY created",
+    )
     .all(req.params.id)
     .map(({ owner, ...n }) => ({
       ...n,
@@ -254,7 +258,7 @@ app.post("/api/sessions/:id/files", admin, access, (req, res, next) => {
   });
 });
 async function processUpload(req, res) {
-  if (!req.file) throw fail(400, "Choose a PDF or audio file.");
+  if (!req.file) throw fail(400, "Choose a PDF, audio, or video file.");
   const f = req.file,
     id = randomUUID();
   let target;
@@ -272,13 +276,40 @@ async function processUpload(req, res) {
         ".flac",
         ".webm",
         ".mp4",
+        ".mov",
       ].includes(ext)
     )
-      throw fail(
-        400,
-        "Use a PDF or an audio file (AAC, M4A, MP3, WAV, OGG, FLAC, WebM).",
-      );
-    const stored = id + (pdf ? ".pdf" : ".m4a");
+      throw fail(400, "Use a PDF, audio file, or MP4, MOV, or WebM video.");
+    let video = false,
+      videoStream;
+    if (!pdf) {
+      try {
+        const probe = await run(
+          "ffprobe",
+          [
+            "-v",
+            "error",
+            "-protocol_whitelist",
+            "file,pipe",
+            "-format_whitelist",
+            "aac,mov,mp3,wav,ogg,flac,matroska,webm",
+            "-show_streams",
+            "-of",
+            "json",
+            f.path,
+          ],
+          { timeout: 30000, maxBuffer: 1024 * 1024 },
+        );
+        videoStream = JSON.parse(probe.stdout).streams.find(
+          (stream) =>
+            stream.codec_type === "video" && !stream.disposition?.attached_pic,
+        );
+        video = !!videoStream;
+      } catch {
+        throw fail(400, "This recording could not be read. Try another file.");
+      }
+    }
+    const stored = id + (pdf ? ".pdf" : video ? ".mp4" : ".m4a");
     target = path.join(data, "uploads", stored);
     if (pdf) {
       if (
@@ -301,9 +332,31 @@ async function processUpload(req, res) {
             "aac,mov,mp3,wav,ogg,flac,matroska,webm",
             "-i",
             f.path,
-            "-map",
-            "0:a:0",
-            "-vn",
+            ...(video
+              ? [
+                  "-map",
+                  `0:${videoStream.index}`,
+                  "-map",
+                  "0:a:0?",
+                  "-c:v",
+                  "libx264",
+                  "-preset",
+                  "veryfast",
+                  "-crf",
+                  "23",
+                  "-pix_fmt",
+                  "yuv420p",
+                  "-vf",
+                  "scale=w='min(1280,iw)':h='min(1280,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2" +
+                    (["arib-std-b67", "smpte2084"].includes(
+                      videoStream.color_transfer,
+                    )
+                      ? ",zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p"
+                      : ""),
+                  "-threads",
+                  "2",
+                ]
+              : ["-map", "0:a:0", "-vn"]),
             "-c:a",
             "aac",
             "-b:a",
@@ -313,12 +366,12 @@ async function processUpload(req, res) {
             "-y",
             target,
           ],
-          { timeout: 300000, maxBuffer: 1024 * 1024 },
+          { timeout: video ? 900000 : 300000, maxBuffer: 1024 * 1024 },
         );
       } catch {
         throw fail(
           400,
-          "This audio could not be prepared. Try another audio file.",
+          "This recording could not be prepared. Try another file.",
         );
       }
     }
@@ -326,7 +379,7 @@ async function processUpload(req, res) {
       id,
       req.params.id,
       text(f.originalname, 200),
-      pdf ? "score" : "audio",
+      pdf ? "score" : video ? "video" : "audio",
       stored,
       new Date().toISOString(),
     );
@@ -343,13 +396,19 @@ app.get("/api/sessions/:id/files/:fileId", access, (req, res) => {
     .prepare("SELECT * FROM files WHERE id=? AND session_id=?")
     .get(req.params.fileId, req.params.id);
   if (!file) throw fail(404, "File not found.");
-  res.type(file.kind === "score" ? "application/pdf" : "audio/mp4");
+  res.type(
+    file.kind === "score"
+      ? "application/pdf"
+      : file.kind === "video"
+        ? "video/mp4"
+        : "audio/mp4",
+  );
   res.sendFile(path.join(data, "uploads", file.stored));
 });
 app.post("/api/sessions/:id/notes", access, (req, res) => {
   const body = text(req.body.body, 5000);
   if (!body) throw fail(400, "Write a note first.");
-  const kind = ["note", "question", "bookmark"].includes(req.body.kind)
+  const kind = ["note", "question"].includes(req.body.kind)
     ? req.body.kind
     : "note";
   const file = (id, kind) =>
@@ -357,7 +416,8 @@ app.post("/api/sessions/:id/notes", access, (req, res) => {
     db
       .prepare("SELECT id FROM files WHERE id=? AND session_id=? AND kind=?")
       .get(id, req.params.id, kind);
-  const audio = file(req.body.audioId, "audio"),
+  const audio =
+      file(req.body.audioId, "audio") || file(req.body.audioId, "video"),
     score = file(req.body.scoreId, "score");
   if ((req.body.audioId && !audio) || (req.body.scoreId && !score))
     throw fail(400, "Choose a file from this session.");
@@ -395,7 +455,7 @@ app.post("/api/sessions/:id/notes", access, (req, res) => {
   const parent = req.body.parentId
     ? db
         .prepare(
-          "SELECT id FROM notes WHERE id=? AND session_id=? AND parent_id IS NULL",
+          "SELECT id FROM notes WHERE id=? AND session_id=? AND parent_id IS NULL AND deleted_at IS NULL",
         )
         .get(req.body.parentId, req.params.id)
     : null;
@@ -428,7 +488,9 @@ app.post("/api/sessions/:id/notes", access, (req, res) => {
 });
 app.patch("/api/sessions/:id/notes/:noteId", access, (req, res) => {
   const note = db
-    .prepare("SELECT * FROM notes WHERE id=? AND session_id=?")
+    .prepare(
+      "SELECT * FROM notes WHERE id=? AND session_id=? AND deleted_at IS NULL",
+    )
     .get(req.params.noteId, req.params.id);
   if (!note) throw fail(404, "Note not found.");
   if (!req.identity.admin && note.owner !== req.identity.token)
@@ -440,12 +502,36 @@ app.patch("/api/sessions/:id/notes/:noteId", access, (req, res) => {
 });
 app.delete("/api/sessions/:id/notes/:noteId", access, (req, res) => {
   const note = db
-    .prepare("SELECT * FROM notes WHERE id=? AND session_id=?")
+    .prepare(
+      "SELECT * FROM notes WHERE id=? AND session_id=? AND deleted_at IS NULL",
+    )
     .get(req.params.noteId, req.params.id);
   if (!note) throw fail(404, "Note not found.");
   if (!req.identity.admin && note.owner !== req.identity.token)
     throw fail(403, "You can only remove your own notes.");
-  db.prepare("DELETE FROM notes WHERE id=?").run(note.id);
+  const removed = new Date().toISOString() + "/" + randomUUID();
+  db.prepare(
+    "UPDATE notes SET deleted_at=? WHERE (id=? OR parent_id=?) AND deleted_at IS NULL",
+  ).run(removed, note.id, note.id);
+  res.json({ ok: true });
+});
+app.post("/api/sessions/:id/notes/:noteId/restore", access, (req, res) => {
+  const note = db
+    .prepare("SELECT * FROM notes WHERE id=? AND session_id=?")
+    .get(req.params.noteId, req.params.id);
+  if (!note || !note.deleted_at) throw fail(404, "Removed note not found.");
+  if (!req.identity.admin && note.owner !== req.identity.token)
+    throw fail(403, "You can only restore your own notes.");
+  if (
+    note.parent_id &&
+    !db
+      .prepare("SELECT id FROM notes WHERE id=? AND deleted_at IS NULL")
+      .get(note.parent_id)
+  )
+    throw fail(400, "Restore the original note first.");
+  db.prepare(
+    "UPDATE notes SET deleted_at=NULL WHERE (id=? OR parent_id=?) AND deleted_at=?",
+  ).run(note.id, note.id, note.deleted_at);
   res.json({ ok: true });
 });
 app.use(

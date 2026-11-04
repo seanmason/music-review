@@ -318,6 +318,151 @@ test("private library, session access and persisted collaborative notes", async 
     assert.equal(s.data.notes[0].location_label, "Bars 9–12");
   });
   await t.test(
+    "video playback files and all attachment combinations",
+    async () => {
+      const videoPath = path.join(dir, "video.mp4");
+      execFileSync("ffmpeg", [
+        "-v",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        "color=c=blue:s=320x240:d=1",
+        "-f",
+        "lavfi",
+        "-i",
+        "sine=frequency=440:duration=1",
+        "-c:v",
+        "libx264",
+        "-c:a",
+        "aac",
+        "-shortest",
+        "-y",
+        videoPath,
+      ]);
+      const form = new FormData();
+      form.append("file", new Blob([readFileSync(videoPath)]), "clip.MP4");
+      const uploaded = await req(`/sessions/${sessionId}/files`, {
+        body: form,
+      });
+      assert.equal(uploaded.status, 201);
+      const vid = uploaded.data.id;
+      const files = (await req(`/sessions/${sessionId}`)).data.files;
+      assert.equal(files.find((f) => f.id === vid).kind, "video");
+      const stream = await fetch(
+        base + `/api/sessions/${sessionId}/files/${vid}`,
+        { headers: { cookie: visitorCookie, range: "bytes=0-63" } },
+      );
+      assert.equal(stream.status, 206);
+      assert.match(stream.headers.get("content-type"), /video\/mp4/);
+      for (const attachment of [
+        { scoreId, page: 1 },
+        { audioId, time: 0.2 },
+        { audioId: vid, time: 0.3 },
+        { audioId: vid, time: 0.3, scoreId, page: 1 },
+        {},
+      ]) {
+        const saved = await req(`/sessions/${sessionId}/notes`, {
+          body: { body: "Attachment example", kind: "question", ...attachment },
+          cookie: visitorCookie,
+        });
+        assert.equal(saved.status, 201);
+        const note = (await req(`/sessions/${sessionId}`)).data.notes.find(
+          (n) => n.id === saved.data.id,
+        );
+        assert.equal(note.audio_id, attachment.audioId || null);
+        assert.equal(note.score_id, attachment.scoreId || null);
+        assert.equal(
+          (
+            await req(`/sessions/${sessionId}/notes/${note.id}`, {
+              method: "DELETE",
+              body: {},
+              cookie: visitorCookie,
+            })
+          ).status,
+          200,
+        );
+      }
+    },
+  );
+  await t.test(
+    "remove and undo preserve replies and enforce ownership",
+    async () => {
+      let data = (
+        await req(`/sessions/${sessionId}`, { cookie: visitorCookie })
+      ).data;
+      const reply = data.notes.find((n) => n.parent_id === noteId);
+      assert.equal(
+        (
+          await req(`/sessions/${sessionId}/notes/${reply.id}`, {
+            method: "DELETE",
+            body: {},
+            cookie: visitorCookie,
+          })
+        ).status,
+        403,
+      );
+      assert.equal(
+        (
+          await req(`/sessions/${sessionId}/notes/${noteId}`, {
+            method: "DELETE",
+            body: {},
+            cookie: visitorCookie,
+          })
+        ).status,
+        200,
+      );
+      data = (await req(`/sessions/${sessionId}`)).data;
+      assert.equal(
+        data.notes.some((n) => n.id === noteId || n.parent_id === noteId),
+        false,
+      );
+      assert.equal(
+        (
+          await req(`/sessions/${sessionId}/notes`, {
+            body: { body: "Reply to removed note", parentId: noteId },
+          })
+        ).status,
+        400,
+      );
+      assert.equal(
+        (
+          await req(`/sessions/${sessionId}/notes/${noteId}/restore`, {
+            body: {},
+            cookie: visitorCookie,
+          })
+        ).status,
+        200,
+      );
+      data = (await req(`/sessions/${sessionId}`)).data;
+      assert.ok(data.notes.find((n) => n.id === noteId));
+      assert.ok(data.notes.find((n) => n.id === reply.id));
+      await req(`/sessions/${sessionId}/notes/${reply.id}`, {
+        method: "DELETE",
+        body: {},
+      });
+      assert.equal(
+        (
+          await req(`/sessions/${sessionId}/notes/${reply.id}/restore`, {
+            body: {},
+            cookie: visitorCookie,
+          })
+        ).status,
+        403,
+      );
+      await req(`/sessions/${sessionId}/notes/${noteId}`, {
+        method: "DELETE",
+        body: {},
+      });
+      await req(`/sessions/${sessionId}/notes/${noteId}/restore`, { body: {} });
+      data = (await req(`/sessions/${sessionId}`)).data;
+      assert.equal(
+        data.notes.some((n) => n.id === reply.id),
+        false,
+      );
+    },
+  );
+  await t.test(
     "rotating a code revokes old access, deletion cleans up session",
     async () => {
       const r = await req(`/sessions/${sessionId}/code`, { body: {} });

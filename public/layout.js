@@ -6,9 +6,10 @@ const defaults = () => ({
   upper: 205,
   right: false,
 });
-export function setupWorkspaceLayout(onResize) {
+export function setupWorkspaceLayout(onResize, video = false) {
   const grid = document.querySelector("#review-grid");
   let layout = defaults();
+  if (video) layout.upper = 350;
   try {
     const saved = JSON.parse(localStorage.getItem(KEY));
     if (
@@ -26,6 +27,7 @@ export function setupWorkspaceLayout(onResize) {
       };
     }
   } catch {}
+  if (video) layout.upper = Math.max(340, layout.upper);
   const panes = [...grid.querySelectorAll("[data-pane]")];
   function apply(save = true) {
     grid.classList.toggle("main-right", layout.right);
@@ -123,11 +125,11 @@ export function setupWorkspaceLayout(onResize) {
     handle.onclick = () => {
       if (suppressClick) return;
       const modal = document.querySelector("#modal");
-      modal.innerHTML = `<h2>Move ${key === "audio" ? "recording" : key} pane</h2><p>Choose a pane to swap with. You can also drag the handle onto another pane.</p><div class="actions">${panes
+      modal.innerHTML = `<h2>Move ${{ audio: "Recording", score: "Score", notes: "Notes" }[key]} Pane</h2><p>Choose a pane to swap with. You can also drag the handle onto another pane.</p><div class="actions">${panes
         .filter((other) => other !== p)
         .map(
           (other) =>
-            `<button data-swap="${other.dataset.pane}">Swap with ${other.dataset.pane === "audio" ? "recording" : other.dataset.pane}</button>`,
+            `<button data-swap="${other.dataset.pane}">Swap with ${{ audio: "Recording", score: "Score", notes: "Notes" }[other.dataset.pane]}</button>`,
         )
         .join("")}<button id="close-layout">Cancel</button></div>`;
       modal.showModal();
@@ -200,11 +202,18 @@ export function setupWorkspaceLayout(onResize) {
   splitter("#row-divider", "y");
   document.querySelector("#reset-layout").onclick = () => {
     layout = defaults();
+    if (video) layout.upper = 350;
     apply();
   };
   document.querySelector("#flip-layout").onclick = () => {
     layout.right = !layout.right;
     apply();
   };
+  grid.addEventListener("recordingtypechange", (e) => {
+    if (e.detail && layout.slots.audio === "upper" && layout.upper < 340) {
+      layout.upper = 340;
+      apply();
+    }
+  });
   apply(false);
 }

@@ -523,7 +523,7 @@ audio {
 .tag {
   font-size: 10px;
   font-weight: 700;
-  text-transform: uppercase;
+  text-transform: none;
   letter-spacing: 0.1em;
   background: #edf0e8;
   border-radius: 4px;
@@ -1273,11 +1273,9 @@ body:has(.workspace) #app {
 }
 @media (min-width: 601px) {
   .review-grid {
-    grid-template-columns: clamp(
-        260px,
-        var(--main-width, 65%),
-        calc(100% - 252px)
-      ) 12px minmax(240px, 1fr);
+    grid-template-columns:
+      clamp(260px, var(--main-width, 65%), calc(100% - 252px))
+      12px minmax(240px, 1fr);
   }
   .review-grid.main-right {
     grid-template-columns: minmax(240px, 1fr) 12px clamp(
@@ -1286,4 +1284,219 @@ body:has(.workspace) #app {
         calc(100% - 252px)
       );
   }
+}
+/* Compact chrome leaves room for the score and review controls. */
+body:has(.workspace) .topbar {
+  height: 42px;
+  padding: 0 16px;
+}
+body:has(.workspace) .brand {
+  font-size: 19px;
+  gap: 5px;
+}
+body:has(.workspace) .brand-icon {
+  width: 27px;
+  height: 27px;
+  font-size: 18px;
+}
+body:has(.workspace) #account button {
+  min-height: 30px;
+  padding: 4px 9px;
+  font-size: 12px;
+}
+.workspace {
+  padding: 8px 12px;
+}
+.session-heading {
+  gap: 8px;
+  margin-bottom: 8px;
+  align-items: center;
+}
+.session-heading > div:first-child {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.session-heading h1 {
+  font-size: 22px;
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.session-heading .session-details {
+  font-size: 11px;
+  min-height: 26px;
+  padding: 3px 6px;
+  white-space: nowrap;
+}
+.session-heading .actions {
+  margin-left: auto;
+  flex-wrap: nowrap;
+}
+.session-heading .actions button {
+  min-height: 30px;
+  padding: 5px 9px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.session-heading .layout-tools {
+  margin: 0 0 0 auto;
+  flex-shrink: 0;
+  gap: 5px;
+}
+.session-heading .layout-tools button {
+  min-height: 28px;
+  padding: 4px 7px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.attachment-picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+.attachment-picker label {
+  margin: 0;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.attachment-picker select {
+  min-height: 34px;
+  padding: 6px;
+  font-size: 12px;
+}
+.attachment-summary {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.6;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 6px;
+}
+.attachment-summary [hidden] {
+  display: none;
+}
+.note-actions {
+  justify-content: flex-start;
+  align-items: center;
+}
+.note-actions button {
+  min-height: 32px;
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 12px;
+  background: white;
+}
+.note-actions button.remove-note {
+  color: #983e32;
+  margin-left: auto;
+  border-color: #e5cfc7;
+}
+#toast button {
+  padding: 4px 12px;
+  min-height: 30px;
+  margin-left: 12px;
+  font-size: 13px;
+}
+video#player {
+  width: 100%;
+  min-height: 100px;
+  max-height: calc(100% - 105px);
+  flex: 1;
+  object-fit: contain;
+  background: #17231f;
+  border-radius: 6px;
+}
+.audio-panel:has(video) .audio-tools {
+  flex-shrink: 0;
+}
+.review-grid .notes-panel .panel-head h2 {
+  font-size: 14px;
+}
+.review-grid .notes-panel .panel-head select {
+  min-width: 65px;
+  flex: 1;
+}
+.note-compose textarea {
+  min-height: 65px;
+}
+@media (min-width: 601px) and (max-width: 1000px) {
+  .session-heading .session-details {
+    display: none;
+  }
+  .session-heading h1 {
+    max-width: 270px;
+    font-size: 20px;
+  }
+  .session-heading {
+    flex-wrap: wrap;
+  }
+  .review-grid .notes-panel .panel-head {
+    gap: 4px;
+  }
+}
+@media (max-width: 600px) {
+  .session-heading > div:first-child {
+    display: block;
+  }
+  .session-heading h1 {
+    white-space: normal;
+    font-size: 22px;
+  }
+  .session-heading .session-details {
+    display: none;
+  }
+  .audio-panel:has(video) {
+    min-height: 280px;
+  }
+  video#player {
+    max-height: 280px;
+    min-height: 180px;
+    flex: auto;
+  }
+}
+
+.session-heading .session-details {
+  display: inline-block !important;
+  font-size: 16px;
+  padding: 2px;
+  min-height: 26px;
+}
+.review-grid .notes-panel .panel-head {
+  padding: 8px 10px;
+  gap: 4px;
+}
+.review-grid .notes-panel .panel-head h2 {
+  font-size: 12px;
+}
+.review-grid .notes-panel .panel-head .pane-handle {
+  padding: 2px 5px;
+}
+.review-grid .notes-panel .panel-head select {
+  min-width: 45px;
+  max-width: 80px;
+  font-size: 11px;
+  padding: 4px;
+}
+
+#score-status:empty {
+  display: none;
+}
+
+.compose-toggle {
+  margin: 10px 12px;
+  min-height: 34px;
+  padding: 6px 12px;
+  font-size: 13px;
+  color: var(--green);
+  background: #edf2e9;
+  border-color: #cbd6c4;
+}
+.note-compose[hidden] {
+  display: none;
 }
