@@ -392,6 +392,15 @@ async function processUpload(req, res) {
     if (existsSync(f.path)) unlinkSync(f.path);
   }
 }
+app.patch("/api/sessions/:id/files/:fileId", admin, access, (req, res) => {
+  const name = typeof req.body.name === "string" ? req.body.name.trim() : "";
+  if (!name || name.length > 200)
+    throw fail(400, "Enter a name of 1–200 characters.");
+  const result = db.prepare("UPDATE files SET name=? WHERE id=? AND session_id=?")
+    .run(name, req.params.fileId, req.params.id);
+  if (!result.changes) throw fail(404, "File not found.");
+  res.json({ name });
+});
 app.get("/api/sessions/:id/files/:fileId", access, (req, res) => {
   const file = db
     .prepare("SELECT * FROM files WHERE id=? AND session_id=?")

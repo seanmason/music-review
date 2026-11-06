@@ -307,6 +307,19 @@ test("private library, session access and persisted collaborative notes", async 
     });
     assert.equal(r.status, 403);
   });
+  await t.test("owners can rename files without changing access or content", async () => {
+    for (const id of [scoreId, audioId]) {
+      const url = `/sessions/${sessionId}/files/${id}`;
+      const before = await req(url);
+      assert.equal((await req(url, { method: "PATCH", cookie: visitorCookie, body: { name: "Denied" } })).status, 403);
+      for (const name of ["   ", "x".repeat(201), null])
+        assert.equal((await req(url, { method: "PATCH", body: { name } })).status, 400);
+      assert.equal((await req(`/sessions/${otherId}/files/${id}`, { method: "PATCH", body: { name: "Wrong session" } })).status, 404);
+      const renamed = await req(url, { method: "PATCH", body: { name: "  A Friendly Name  " } });
+      assert.equal(renamed.data.name, "A Friendly Name");
+      assert.deepEqual((await req(url)).data, before.data);
+    }
+  });
   await t.test("persists files, login and notes through restart", async () => {
     await stop();
     await start();
@@ -314,6 +327,7 @@ test("private library, session access and persisted collaborative notes", async 
     assert.equal(s.status, 200);
     assert.equal(s.data.notes[0].body, "Updated question");
     assert.equal(s.data.files.length, 2);
+    assert.ok(s.data.files.every((f) => f.name === "A Friendly Name"));
     assert.equal(s.data.notes[0].width, 0.3);
     assert.equal(s.data.notes[0].location_label, "Bars 9–12");
   });
