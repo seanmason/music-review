@@ -1,4 +1,4 @@
-# Score & Sound
+# Music Review
 
 A small, self-hosted web app for listening to recordings alongside scores and sharing notes. Reviewers enter their name and a session code; the owner manages a private library with a password.
 

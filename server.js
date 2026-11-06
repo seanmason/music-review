@@ -594,7 +594,7 @@ const server = app.listen(
   process.env.HOST || "0.0.0.0",
   () =>
     console.log(
-      `Score & Sound is ready at http://localhost:${server.address().port}`,
+      `Music Review is ready at http://localhost:${server.address().port}`,
     ),
 );
 process.on("SIGTERM", () =>
